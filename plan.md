@@ -41,17 +41,17 @@ Every task within every phase follows this loop:
 7. **GREEN** — Define `token` struct, add number lexing
 8. **GREEN** — Run tests → both pass
 9. Continue for each row in E1.1 Test Matrix:
-   - [x] Empty input
-   - [x] Single number / negative / float
-   - [x] String literal / string with escape
-   - [x] Symbol / operator symbol
-   - [x] Boolean `#t` / `#f`
-   - [x] Parentheses
-   - [x] Mixed expression `(+ 1 2)`
-   - [x] Comment skipping
-   - [x] Whitespace only
-   - [x] Unterminated string → error
-   - [x] Nested parens
+   - [ ] Empty input
+   - [ ] Single number / negative / float
+   - [ ] String literal / string with escape
+   - [ ] Symbol / operator symbol
+   - [ ] Boolean `#t` / `#f`
+   - [ ] Parentheses
+   - [ ] Mixed expression `(+ 1 2)`
+   - [ ] Comment skipping
+   - [ ] Whitespace only
+   - [ ] Unterminated string → error
+   - [ ] Nested parens
 10. **REFACTOR** — Clean up lexer code, ensure no duplication
 11. **COMMIT** — All E1.1 tests green
 
