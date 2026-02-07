@@ -1,0 +1,15 @@
+{
+  "language": "haskell",
+  "file_extension": ".hs",
+  "run_command": "cabal run strawman --",
+  "test_command": "cabal test",
+  "test_dir_command": "cabal test --test-show-details=direct",
+  "test_framework": "hspec",
+  "source_dir": "src",
+  "test_dir": "test",
+  "entry_point": "app/Main.hs",
+  "test_file_pattern": "{Module}Spec",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must declare a `module Strawman.ModuleName` and export its public API.\nEach test file must import the module under test and use Hspec's `describe`/`it`/`shouldBe`.\nExpose modules in the `.cabal` file under `exposed-modules`.",
+  "file_preamble": ""
+}

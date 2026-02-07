@@ -1,0 +1,26 @@
+;; Fibonacci with memoization
+;;
+;; Uses a vector as a cache to avoid redundant computation.
+;; Computes fib(30) = 832040 efficiently.
+
+(define memo (make-vector 100 -1))
+
+(define (fib n)
+  (if (< n 2) n
+    (let ((cached (vector-ref memo n)))
+      (if (= cached -1)
+        (let ((result (+ (fib (- n 1)) (fib (- n 2)))))
+          (begin (vector-set! memo n result) result))
+        cached))))
+
+(display "fib(10) = ")
+(display (fib 10))
+(newline)
+
+(display "fib(20) = ")
+(display (fib 20))
+(newline)
+
+(display "fib(30) = ")
+(display (fib 30))
+(newline)

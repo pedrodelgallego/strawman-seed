@@ -1,0 +1,15 @@
+{
+  "language": "python",
+  "file_extension": ".py",
+  "run_command": "python3",
+  "test_command": "pytest",
+  "test_dir_command": "pytest tests/ -v",
+  "test_framework": "pytest",
+  "source_dir": "src",
+  "test_dir": "tests",
+  "entry_point": "strawman.py",
+  "test_file_pattern": "test_{module}",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must be a Python module with functions and classes.\nEach test file must `import pytest` and import the module under test from `src/`.\nUse `__init__.py` files to make directories importable packages.",
+  "file_preamble": ""
+}

@@ -1,0 +1,15 @@
+{
+  "language": "java",
+  "file_extension": ".java",
+  "run_command": "java -cp build/classes",
+  "test_command": "mvn test",
+  "test_dir_command": "mvn test",
+  "test_framework": "junit5",
+  "source_dir": "src/main/java/strawman",
+  "test_dir": "src/test/java/strawman",
+  "entry_point": "src/main/java/strawman/Strawman.java",
+  "test_file_pattern": "{Module}Test",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must declare `package strawman;` and contain one public class.\nEach test file must `import org.junit.jupiter.api.*` and use `@Test` annotations with `assertEquals`, `assertThrows`, etc.\nFollow Maven standard directory layout.",
+  "file_preamble": "package strawman;"
+}

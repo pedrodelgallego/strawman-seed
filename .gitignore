@@ -1,0 +1,30 @@
+# Racket compiled files
+compiled/
+**/compiled/
+
+# Bytecode
+*.zo
+*.dep
+
+# Documentation build artifacts
+doc/
+
+# macOS
+.DS_Store
+
+# Editor files
+*~
+\#*\#
+.#*
+*.swp
+*.swo
+
+# IDE
+.idea/
+.vscode/
+
+# Racket package database
+/pkgs/
+
+# REPL history
+.racket_history

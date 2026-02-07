@@ -1,0 +1,15 @@
+{
+  "language": "rust",
+  "file_extension": ".rs",
+  "run_command": "cargo run --",
+  "test_command": "cargo test",
+  "test_dir_command": "cargo test",
+  "test_framework": "built-in (#[cfg(test)] mod tests)",
+  "source_dir": "src",
+  "test_dir": "tests",
+  "entry_point": "src/main.rs",
+  "test_file_pattern": "{module}",
+  "source_extension": ".straw",
+  "module_instructions": "Each source module must declare `pub` items for its public API.\nUnit tests go in a `#[cfg(test)] mod tests` block at the bottom of each source file.\nIntegration tests go in the `tests/` directory.\nUse `mod` declarations in `main.rs` or `lib.rs` to wire modules together.",
+  "file_preamble": ""
+}

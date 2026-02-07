@@ -1,0 +1,15 @@
+{
+  "language": "ruby",
+  "file_extension": ".rb",
+  "run_command": "ruby",
+  "test_command": "bundle exec rspec",
+  "test_dir_command": "bundle exec rspec",
+  "test_framework": "rspec",
+  "source_dir": "lib",
+  "test_dir": "spec",
+  "entry_point": "strawman.rb",
+  "test_file_pattern": "{module}_spec",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must define a module or class under the `Strawman` namespace.\nEach spec file must `require` the module under test and use RSpec's `describe`/`it`/`expect`.\nUse `require_relative` for internal imports.",
+  "file_preamble": "# frozen_string_literal: true"
+}

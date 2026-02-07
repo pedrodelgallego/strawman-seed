@@ -1,0 +1,18 @@
+;; FizzBuzz — the classic starter program
+;;
+;; Prints numbers 1 to 30, replacing multiples of 3 with "Fizz",
+;; multiples of 5 with "Buzz", and multiples of both with "FizzBuzz".
+
+(define (fizzbuzz n)
+  (letrec ((loop (lambda (i)
+    (if (> i n) (quote done)
+      (begin
+        (display (if (= (mod i 15) 0) "FizzBuzz"
+                   (if (= (mod i 3) 0) "Fizz"
+                     (if (= (mod i 5) 0) "Buzz"
+                       i))))
+        (newline)
+        (loop (+ i 1)))))))
+    (loop 1)))
+
+(fizzbuzz 30)

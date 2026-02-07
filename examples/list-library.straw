@@ -1,0 +1,43 @@
+;; A tiny list library — map, filter, fold
+;;
+;; Builds reusable higher-order functions on top of cons/car/cdr,
+;; then composes them to compute the sum of squares of even numbers.
+
+(define (map f lst)
+  (if (null? lst) (quote ())
+    (cons (f (car lst)) (map f (cdr lst)))))
+
+(define (filter pred lst)
+  (if (null? lst) (quote ())
+    (if (pred (car lst))
+      (cons (car lst) (filter pred (cdr lst)))
+      (filter pred (cdr lst)))))
+
+(define (fold f acc lst)
+  (if (null? lst) acc
+    (fold f (f acc (car lst)) (cdr lst))))
+
+(define (range lo hi)
+  (if (> lo hi) (quote ())
+    (cons lo (range (+ lo 1) hi))))
+
+(define nums (range 1 10))
+
+(display "numbers:         ")
+(display nums)
+(newline)
+
+(define squares (map (lambda (x) (* x x)) nums))
+(display "squares:         ")
+(display squares)
+(newline)
+
+(define evens (filter (lambda (x) (= (mod x 2) 0)) nums))
+(display "evens:           ")
+(display evens)
+(newline)
+
+(define result (fold + 0 (filter (lambda (x) (= (mod x 2) 0)) squares)))
+(display "sum of even squares: ")
+(display result)
+(newline)

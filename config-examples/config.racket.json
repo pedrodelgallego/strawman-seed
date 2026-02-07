@@ -1,0 +1,15 @@
+{
+  "language": "racket",
+  "file_extension": ".rkt",
+  "run_command": "racket",
+  "test_command": "raco test",
+  "test_dir_command": "raco test tests/",
+  "test_framework": "rackunit",
+  "source_dir": "src",
+  "test_dir": "tests",
+  "entry_point": "strawman.rkt",
+  "test_file_pattern": "test-{module}",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must use `#lang racket` and `provide` its public API.\nEach test file must `require rackunit` and the module under test.",
+  "file_preamble": "#lang racket"
+}

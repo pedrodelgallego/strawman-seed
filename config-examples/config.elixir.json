@@ -1,0 +1,15 @@
+{
+  "language": "elixir",
+  "file_extension": ".ex",
+  "run_command": "mix run",
+  "test_command": "mix test",
+  "test_dir_command": "mix test",
+  "test_framework": "ExUnit",
+  "source_dir": "lib",
+  "test_dir": "test",
+  "entry_point": "lib/strawman.ex",
+  "test_file_pattern": "{module}_test",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must define a module under `Strawman` (e.g. `Strawman.Lexer`).\nEach test file must `use ExUnit.Case` and import the module under test.\nFollow standard Mix project layout.",
+  "file_preamble": ""
+}

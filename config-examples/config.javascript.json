@@ -1,0 +1,15 @@
+{
+  "language": "javascript",
+  "file_extension": ".js",
+  "run_command": "node",
+  "test_command": "npx jest",
+  "test_dir_command": "npx jest --verbose",
+  "test_framework": "jest",
+  "source_dir": "src",
+  "test_dir": "tests",
+  "entry_point": "strawman.js",
+  "test_file_pattern": "{module}.test",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must use `module.exports` to export its public API.\nEach test file must `require` the module under test and use Jest's `describe`/`test`/`expect`.",
+  "file_preamble": "'use strict';"
+}

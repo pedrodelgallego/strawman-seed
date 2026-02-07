@@ -1,0 +1,15 @@
+{
+  "language": "c",
+  "file_extension": ".c",
+  "run_command": "build/strawman",
+  "test_command": "make test",
+  "test_dir_command": "make test",
+  "test_framework": "unity (ThrowTheSwitch/Unity)",
+  "source_dir": "src",
+  "test_dir": "tests",
+  "entry_point": "src/main.c",
+  "test_file_pattern": "test_{module}",
+  "source_extension": ".straw",
+  "module_instructions": "Each source module has a `.c` implementation and a `.h` header declaring its public API.\nEach test file must `#include` the header under test and use Unity assertions (`TEST_ASSERT_EQUAL`, etc.).\nUse a Makefile to compile source and test targets.",
+  "file_preamble": "#include <stdlib.h>\n#include <stdio.h>"
+}

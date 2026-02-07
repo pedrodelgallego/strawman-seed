@@ -1,0 +1,15 @@
+{
+  "language": "typescript",
+  "file_extension": ".ts",
+  "run_command": "npx ts-node",
+  "test_command": "npx vitest run",
+  "test_dir_command": "npx vitest run",
+  "test_framework": "vitest",
+  "source_dir": "src",
+  "test_dir": "tests",
+  "entry_point": "strawman.ts",
+  "test_file_pattern": "{module}.test",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must use named `export` for its public API.\nEach test file must `import` the module under test and use Vitest's `describe`/`it`/`expect`.\nUse strict TypeScript types — avoid `any`.",
+  "file_preamble": ""
+}

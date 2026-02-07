@@ -1,0 +1,15 @@
+{
+  "language": "go",
+  "file_extension": ".go",
+  "run_command": "go run .",
+  "test_command": "go test ./...",
+  "test_dir_command": "go test ./... -v",
+  "test_framework": "testing (standard library)",
+  "source_dir": ".",
+  "test_dir": ".",
+  "entry_point": "main.go",
+  "test_file_pattern": "{module}_test",
+  "source_extension": ".straw",
+  "module_instructions": "Each source file must declare `package strawman` (or a sub-package).\nEach test file must be in the same package and `import \"testing\"`.\nExported functions start with an uppercase letter.\nTest functions must be named `TestXxx(t *testing.T)`.",
+  "file_preamble": "package strawman"
+}
