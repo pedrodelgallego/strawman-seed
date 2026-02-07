@@ -1,22 +1,27 @@
-# Strawman
+# Strawman Seed
 
-A minimal Lisp interpreter written in Racket — built entirely by AI,
-one failing test at a time.
+A seed repository for building AI-coded Lisp interpreters in any language.
+
+Clone this repo, pick your language, and let Claude Code write every line
+of code — one failing test at a time.
 
 ---
 
 ## The Idea
 
-Strawman is two experiments in one:
+Strawman Seed is a starter kit for an experiment:
 
 1. **A Lisp interpreter** structured around *Lisp in Small Pieces* by
    Christian Queinnec — starting from a basic eval/apply core and growing
    toward continuations, macros, a bytecode compiler, and an object system.
 
-2. **An AI-authoring experiment** where a human writes zero code. The spec,
-   the plan, the architecture — those are human decisions. Every line of
-   Racket, every test, every commit message is produced by Claude Code
-   following a strict TDD workflow.
+2. **Any implementation language.** The repo ships with config examples for
+   Python, TypeScript, Rust, Go, Ruby, Java, C, Elixir, Haskell, and Racket.
+   Pick one, copy its config, and the entire toolchain adapts.
+
+3. **Zero human-written code.** The spec, the plan, the architecture — those
+   are human decisions. Every line of implementation code, every test, every
+   commit message is produced by Claude Code following a strict TDD workflow.
 
 We call this the **Ralph approach**: direct the intent, let the machine
 write the implementation, and trust nothing that isn't verified by tests.
@@ -27,22 +32,20 @@ An autonomous shell script (`ralph.sh`) drives the entire build:
 
 ```
  plan.md          spec.md          ralph.sh
- ┌──────┐        ┌──────┐        ┌────────────────────┐
- │- [ ] │───────>│ Test │───────>│ 1. Find next task   │
- │- [ ] │        │Matrix│        │ 2. Claude: write    │
- │- [x] │        │      │        │    failing test     │
- │- [x] │        │      │        │ 3. Claude: write    │
- └──────┘        └──────┘        │    minimum code     │
-                                 │ 4. raco test (gate) │
-                                 │ 5. Mark [x] or retry│
-                                 │ 6. Auto-commit      │
-                                 │ 7. Loop             │
-                                 └────────────────────┘
+ ┌──────┐        ┌──────┐        ┌────────────────────────┐
+ │- [ ] │───────>│ Test │───────>│ 1. Find next task       │
+ │- [ ] │        │Matrix│        │ 2. Claude: write test   │
+ │- [x] │        │      │        │ 3. Claude: write code   │
+ │- [x] │        │      │        │ 4. Run test suite (gate)│
+ └──────┘        └──────┘        │ 5. Mark [x] or retry    │
+                                 │ 6. Auto-commit           │
+                                 │ 7. Loop                  │
+                                 └────────────────────────┘
 ```
 
-The test suite is the only authority. If `raco test tests/` fails, the
-checkbox stays unchecked and Claude gets another attempt. After 3 failures,
-the loop pauses for a human to look.
+The test suite is the only authority. If tests fail, the checkbox stays
+unchecked and Claude gets another attempt. After 3 failures, the loop
+pauses for a human to look.
 
 ## What Strawman Will Support
 
@@ -57,18 +60,25 @@ The roadmap follows 10 epics mapped to the book's chapters:
 | **Power** | 8–9 | `eval`, reflection, macros, quasiquote |
 | **OOP** | 10 | Classes, generic functions, inheritance |
 
-## Quick Start
+## Getting Started
 
 ```bash
-# Start the REPL
-racket strawman.rkt
+# 1. Clone the seed
+git clone <this-repo> strawman-python
+cd strawman-python
 
-# Run a script
-racket strawman.rkt examples/hello.straw
+# 2. Pick your language (see config-examples/ for all options)
+cp config-examples/config.python.json config.json
 
-# Run the test suite
-raco test tests/
+# 3. Let Claude build it
+./ralph.sh
+
+# Or preview what would happen first
+./ralph.sh --dry-run
 ```
+
+The default `config.json` targets Racket. Config examples are provided for:
+**Python, JavaScript, TypeScript, Rust, Go, Ruby, Java, C, Elixir, Haskell.**
 
 ## Example
 
@@ -107,32 +117,20 @@ Progress is tracked as checkboxes in `plan.md`. Logs go to `ralph.log`.
 ## Project Layout
 
 ```
-strawman/
-  strawman.rkt       Entry point
-  ralph.sh           Autonomous TDD loop driver
-  src/
-    lexer.rkt        Tokenizer
-    parser.rkt        S-expression parser
-    env.rkt          Environments (lexical scope)
-    eval.rkt         Evaluator
-    builtins.rkt     Built-in primitives
-    repl.rkt         Interactive REPL
-  tests/             Test suite (rackunit, one file per module)
-  examples/          Example .straw programs
-  spec.md            10 epics, 37 stories, 150+ test matrix rows
-  plan.md            TDD build order with per-task checkboxes
-  CLAUDE.md          Conventions for Claude Code
+strawman-seed/
+  config.json          Language & toolchain settings (edit this)
+  config-examples/     Pre-made configs for 11 languages
+  ralph.sh             Autonomous TDD loop driver
+  spec.md              10 epics, 37 stories, 150+ test matrix rows
+  plan.md              TDD build order with per-task checkboxes
+  CLAUDE.md            Conventions for Claude Code
+  examples/            Example .straw programs
+  src/                 Production code (created by Claude)
+  tests/               Test suite (created by Claude)
 ```
-
-## Configuration
-
-The implementation language is configured in `config.json`. The default
-configuration targets Racket. To build the interpreter in a different language,
-edit `config.json` with the appropriate commands, file extensions, and test
-framework. `ralph.sh` reads all language-specific settings from this file.
 
 ## Requirements
 
-- The implementation language toolchain (default: [Racket](https://racket-lang.org/) v9.0+)
+- [Claude Code](https://claude.ai/code) (drives the autonomous loop)
 - [jq](https://jqlang.github.io/jq/) (for config parsing in `ralph.sh`)
-- [Claude Code](https://claude.ai/code) (for running `ralph.sh`)
+- The toolchain for your chosen language (e.g., Racket, Python, Rust, etc.)
