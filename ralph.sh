@@ -527,6 +527,7 @@ CPROMPT
     )
 
     claude -p "$commit_prompt" \
+        --verbose \
         --dangerously-skip-permissions \
         --max-turns 10 \
         --output-format stream-json \
@@ -640,6 +641,7 @@ main() {
         local raw_stream="$LOGS_DIR/$(date '+%Y%m%d-%H%M%S')-${task_slug}-stream.jsonl"
 
         claude -p "$prompt" \
+            --verbose \
             --dangerously-skip-permissions \
             --max-turns 50 \
             --output-format stream-json \
