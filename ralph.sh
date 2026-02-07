@@ -66,12 +66,92 @@ load_config() {
     done
 }
 
+# ── Pre-flight checks ────────────────────────────────────────────────────
+
+preflight_checks() {
+    local missing=0
+    for cmd in claude jq git; do
+        if ! command -v "$cmd" &>/dev/null; then
+            echo "ERROR: '$cmd' is required but not found in PATH" >&2
+            missing=1
+        fi
+    done
+    if [[ $missing -ne 0 ]]; then exit 1; fi
+}
+
+show_plan_summary() {
+    local total checked remaining
+    total=$(grep -c '^ *- \[.\]' "$PLAN" || true)
+    checked=$(grep -c '^ *- \[x\]' "$PLAN" || true)
+    [[ -z "$total" ]] && total=0
+    [[ -z "$checked" ]] && checked=0
+    remaining=$((total - checked))
+
+    local claude_ver
+    claude_ver=$(claude --version 2>/dev/null) || claude_ver="unknown"
+
+    log "Language: $LANG_NAME | Test: $TEST_DIR_CMD | Framework: $TEST_FRAMEWORK"
+    log "Claude CLI: $claude_ver"
+    log "Plan: $checked/$total tasks done, $remaining remaining"
+
+    # Verify test command binary is available
+    local test_bin
+    test_bin=$(echo "$TEST_DIR_CMD" | awk '{print $1}')
+    if ! command -v "$test_bin" &>/dev/null; then
+        echo "ERROR: Test command '$test_bin' not found in PATH" >&2
+        exit 1
+    fi
+}
+
 # ── Logging ──────────────────────────────────────────────────────────────
 
 log() {
     local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
     echo "$msg"
     echo "$msg" >> "$LOG"
+}
+
+# ── Progress dashboard ───────────────────────────────────────────────────
+
+show_progress() {
+    local task_text="$1"
+    local attempt="$2"
+
+    local total checked remaining pct
+    total=$(grep -c '^ *- \[.\]' "$PLAN" || true)
+    checked=$(grep -c '^ *- \[x\]' "$PLAN" || true)
+    [[ -z "$total" ]] && total=0
+    [[ -z "$checked" ]] && checked=0
+    remaining=$((total - checked))
+    if [[ $total -gt 0 ]]; then
+        pct=$((checked * 100 / total))
+    else
+        pct=0
+    fi
+
+    local now elapsed_s elapsed_m
+    now=$(date +%s)
+    elapsed_s=$((now - RALPH_START_TIME))
+    elapsed_m=$((elapsed_s / 60))
+
+    local bar_width=30
+    local filled=$((pct * bar_width / 100))
+    local empty=$((bar_width - filled))
+    local bar=""
+    local i
+    for ((i=0; i<filled; i++)); do bar+="#"; done
+    for ((i=0; i<empty; i++)); do bar+="-"; done
+
+    echo ""
+    echo "============================================================"
+    echo "  RALPH LOOP | ${checked}/${total} tasks (${pct}%) | ${elapsed_m}m elapsed"
+    echo "  [${bar}]"
+    echo "  Next: ${task_text}"
+    if [[ "$attempt" -gt 1 ]]; then
+        echo "  Retry: #${attempt} of ${MAX_RETRIES}"
+    fi
+    echo "============================================================"
+    echo ""
 }
 
 # ── Context extraction ───────────────────────────────────────────────────
@@ -165,6 +245,107 @@ check_story_complete() {
     [[ "$remaining" -eq 0 ]]
 }
 
+# ── Stream filter ────────────────────────────────────────────────────────
+
+# Reads NDJSON from claude --output-format stream-json on stdin and prints
+# a compact, human-readable activity feed to stdout.
+ralph_stream_filter() {
+    local turn_count=0
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        local msg_type
+        msg_type=$(echo "$line" | jq -r '.type // empty' 2>/dev/null) || continue
+
+        case "$msg_type" in
+            system)
+                local subtype model
+                subtype=$(echo "$line" | jq -r '.subtype // empty' 2>/dev/null)
+                if [[ "$subtype" == "init" ]]; then
+                    model=$(echo "$line" | jq -r '.model // "unknown"' 2>/dev/null)
+                    echo "  [init] model=$model"
+                fi
+                ;;
+            assistant)
+                turn_count=$((turn_count + 1))
+                # Show tool_use calls with key input
+                local tools
+                tools=$(echo "$line" | jq -r '
+                    .message.content[]?
+                    | select(.type == "tool_use")
+                    | "\(.name): \(
+                        if .name == "Read" or .name == "Write" or .name == "Edit" then (.input.file_path // "?")
+                        elif .name == "Bash" then (.input.command // "?" | .[0:100])
+                        elif .name == "Glob" then (.input.pattern // "?")
+                        elif .name == "Grep" then (.input.pattern // "?")
+                        else (.input | keys | join(", "))
+                        end
+                    )"' 2>/dev/null)
+                if [[ -n "$tools" ]]; then
+                    echo "$tools" | while IFS= read -r tline; do
+                        echo "  [turn $turn_count] $tline"
+                    done
+                fi
+
+                # Show first 120 chars of text responses
+                local text
+                text=$(echo "$line" | jq -r '
+                    .message.content[]?
+                    | select(.type == "text")
+                    | .text' 2>/dev/null | head -c 120)
+                if [[ -n "$text" ]]; then
+                    echo "  [turn $turn_count] $text"
+                fi
+                ;;
+            result)
+                local num_turns total_cost duration_ms subtype
+                num_turns=$(echo "$line" | jq -r '.num_turns // "?"' 2>/dev/null)
+                total_cost=$(echo "$line" | jq -r '.total_cost_usd // "?"' 2>/dev/null)
+                duration_ms=$(echo "$line" | jq -r '.duration_ms // "?"' 2>/dev/null)
+                subtype=$(echo "$line" | jq -r '.subtype // "?"' 2>/dev/null)
+                echo "  [done] turns=$num_turns cost=\$${total_cost} time=${duration_ms}ms status=$subtype"
+                ;;
+        esac
+    done
+}
+
+# ── Test failure diagnostics ─────────────────────────────────────────────
+
+parse_test_failures() {
+    local output="$1"
+
+    # Extract summary lines (e.g., "N tests failed", "N passed")
+    local summary
+    summary=$(echo "$output" | grep -iE '[0-9]+ (tests?|checks?) (failed|passed|run)' | tail -3)
+    if [[ -n "$summary" ]]; then
+        log "Test summary:"
+        echo "$summary" | while IFS= read -r sline; do
+            log "  $sline"
+        done
+    fi
+
+    # Extract FAILURE blocks (rackunit style)
+    local failures
+    failures=$(echo "$output" | grep -A 4 'FAILURE' | grep -E '(name:|actual:|expected:)' | head -20)
+    if [[ -n "$failures" ]]; then
+        log "Failing tests:"
+        echo "$failures" | while IFS= read -r fline; do
+            log "  $fline"
+        done
+    fi
+
+    # Extract ERROR lines
+    local errors
+    errors=$(echo "$output" | grep -iE '^(ERROR|error:|Exception)' | head -5)
+    if [[ -n "$errors" ]]; then
+        log "Errors:"
+        echo "$errors" | while IFS= read -r eline; do
+            log "  $eline"
+        done
+    fi
+}
+
 # ── Build the prompt ─────────────────────────────────────────────────────
 
 build_prompt() {
@@ -236,18 +417,27 @@ CPROMPT
     claude -p "$commit_prompt" \
         --dangerously-skip-permissions \
         --max-turns 10 \
-        --output-format text \
-        >> "$LOG" 2>&1 || log "WARNING: Auto-commit failed"
+        --output-format stream-json \
+        2>> "${CURRENT_TASK_LOG:-$LOG}" \
+        | tee "$LOGS_DIR/commit-$(date '+%Y%m%d-%H%M%S').jsonl" \
+        | ralph_stream_filter \
+        || log "WARNING: Auto-commit failed"
 }
 
 # ── Main loop ────────────────────────────────────────────────────────────
 
 main() {
+    preflight_checks
     load_config
+
+    RALPH_START_TIME=$(date +%s)
+    LOGS_DIR="$PROJECT_DIR/logs"
+    mkdir -p "$LOGS_DIR"
 
     log "═══════════════════════════════════════════"
     log "Ralph Loop starting in $PROJECT_DIR ($LANG_NAME)"
     log "═══════════════════════════════════════════"
+    show_plan_summary
 
     local consecutive_failures=0
     local last_item=""
@@ -281,6 +471,8 @@ main() {
         log "STORY: $story_header"
         log "LINE: $line_num"
 
+        show_progress "$checkbox_text" "$((consecutive_failures + 1))"
+
         # 3. FAILURE TRACKING — same item failing repeatedly?
         if [[ "$checkbox_text" == "$last_item" ]]; then
             consecutive_failures=$((consecutive_failures + 1))
@@ -300,6 +492,12 @@ main() {
         local prompt
         prompt=$(build_prompt "$checkbox_text" "$phase_header" "$story_header")
 
+        # Per-task log file
+        local task_slug
+        task_slug=$(echo "$checkbox_text" | tr ' /()' '-' | tr -d "'\"\`" | head -c 60)
+        local attempt=$((consecutive_failures + 1))
+        CURRENT_TASK_LOG="$LOGS_DIR/$(date '+%Y%m%d-%H%M%S')-${task_slug}-attempt${attempt}.log"
+
         if [[ "$DRY_RUN" == true ]]; then
             log "DRY-RUN: Would invoke claude with:"
             log "  Task: $checkbox_text"
@@ -311,15 +509,57 @@ main() {
             continue
         fi
 
-        # 5. RUN — invoke Claude Code
+        # Log the prompt to the task log
+        {
+            echo "=== PROMPT SENT ==="
+            echo "$prompt"
+            echo "=== END PROMPT ==="
+            echo ""
+        } >> "$CURRENT_TASK_LOG"
+
+        # 5. RUN — invoke Claude Code with streaming
         log "Invoking Claude Code..."
-        local claude_exit=0
+        local task_start claude_exit
+        task_start=$(date +%s)
+        claude_exit=0
+        local raw_stream="$LOGS_DIR/$(date '+%Y%m%d-%H%M%S')-${task_slug}-stream.jsonl"
+
         claude -p "$prompt" \
             --dangerously-skip-permissions \
             --max-turns 50 \
-            --output-format text \
+            --output-format stream-json \
             --append-system-prompt "You are executing a TDD cycle for the Strawman Lisp interpreter in $LANG_NAME. Read spec.md and plan.md for context. Write tests first, then minimal code. Always run $TEST_DIR_CMD to verify." \
-            >> "$LOG" 2>&1 || claude_exit=$?
+            2>> "$CURRENT_TASK_LOG" \
+            | tee "$raw_stream" \
+            | ralph_stream_filter \
+            || claude_exit=$?
+
+        local task_end duration
+        task_end=$(date +%s)
+        duration=$((task_end - task_start))
+        log "Claude finished in ${duration}s (exit code $claude_exit)"
+
+        # Parse the result event from the stream
+        if [[ -f "$raw_stream" ]]; then
+            local result_line result_subtype
+            result_line=$(tail -1 "$raw_stream")
+            result_subtype=$(echo "$result_line" | jq -r '.subtype // empty' 2>/dev/null)
+            if [[ "$result_subtype" == "error_max_turns" ]]; then
+                log "WARNING: Claude hit max turns limit (50)"
+            fi
+
+            # Extract final response to task log
+            local result_text
+            result_text=$(echo "$result_line" | jq -r '.result // empty' 2>/dev/null)
+            if [[ -n "$result_text" ]]; then
+                {
+                    echo ""
+                    echo "=== CLAUDE FINAL RESPONSE ==="
+                    echo "$result_text"
+                    echo "=== END RESPONSE ==="
+                } >> "$CURRENT_TASK_LOG"
+            fi
+        fi
 
         if [[ $claude_exit -ne 0 ]]; then
             log "WARNING: Claude exited with code $claude_exit"
@@ -328,10 +568,12 @@ main() {
         # 6. VERIFY — independently run the test suite
         log "Verifying: $TEST_DIR_CMD..."
         local test_exit=0
+        local test_output=""
 
         # Only run tests if the tests directory has source files
         if ls "$PROJECT_DIR"/$TEST_DIR/*$FILE_EXT 1>/dev/null 2>&1; then
-            (cd "$PROJECT_DIR" && eval "$TEST_DIR_CMD") >> "$LOG" 2>&1 || test_exit=$?
+            test_output=$( (cd "$PROJECT_DIR" && eval "$TEST_DIR_CMD") 2>&1) || test_exit=$?
+            echo "$test_output" >> "$CURRENT_TASK_LOG"
         else
             log "No test files yet — skipping verification (first item bootstrap)"
             test_exit=0
@@ -350,6 +592,8 @@ main() {
             fi
         else
             log "FAIL — tests did not pass (exit code $test_exit)"
+            parse_test_failures "$test_output"
+            log "Full output in: $CURRENT_TASK_LOG"
             log "Will retry this item on next iteration"
         fi
 

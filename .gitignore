@@ -28,3 +28,8 @@ doc/
 
 # REPL history
 .racket_history
+
+# Ralph logs
+logs/
+*.jsonl
+ralph.log
