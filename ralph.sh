@@ -202,6 +202,68 @@ get_context() {
     echo "$story_header"
 }
 
+# ── Extract story ID ────────────────────────────────────────────────────
+
+# Extracts a clean story ID (e.g., "E1.1") from story header and checkbox text.
+# Tries checkbox text first (Phase 8+ embeds story ID), then story header.
+extract_story_id() {
+    local story_header="$1"
+    local checkbox_text="${2:-}"
+
+    # Try checkbox text first (Phase 8+ format: **E4.1** — ...)
+    if [[ -n "$checkbox_text" && "$checkbox_text" =~ E([0-9]+\.[0-9]+) ]]; then
+        echo "E${BASH_REMATCH[1]}"
+        return
+    fi
+
+    # Then try story header (**E1.4 — ... or *Stories: E1.1*)
+    if [[ "$story_header" =~ E([0-9]+\.[0-9]+) ]]; then
+        echo "E${BASH_REMATCH[1]}"
+        return
+    fi
+
+    echo ""
+}
+
+# ── Extract Test Matrix from spec.md ─────────────────────────────────────
+
+# Given a story ID (e.g., "E1.1"), extracts the Test Matrix table from spec.md.
+extract_test_matrix() {
+    local story_id="$1"
+    local spec="$PROJECT_DIR/spec.md"
+
+    # Find story header line (### E1.1 — ...)
+    local header_line
+    header_line=$(grep -n "^### ${story_id} " "$spec" | head -1 | cut -d: -f1)
+
+    if [[ -z "$header_line" ]]; then
+        echo "(Test Matrix not found for $story_id in spec.md)"
+        return
+    fi
+
+    # Find "#### Test Matrix" within the next 60 lines
+    local matrix_offset
+    matrix_offset=$(tail -n "+$header_line" "$spec" | head -60 | grep -n '^#### Test Matrix' | head -1 | cut -d: -f1)
+
+    if [[ -z "$matrix_offset" ]]; then
+        echo "(No Test Matrix section for $story_id)"
+        return
+    fi
+
+    local matrix_start=$((header_line + matrix_offset - 1))
+
+    # Find next section boundary after the Test Matrix
+    local end_offset
+    end_offset=$(tail -n "+$((matrix_start + 1))" "$spec" | grep -n '^####\|^###\|^---' | head -1 | cut -d: -f1)
+
+    if [[ -z "$end_offset" ]]; then
+        # No end marker found; take 30 lines as fallback
+        tail -n "+$matrix_start" "$spec" | head -30
+    else
+        tail -n "+$matrix_start" "$spec" | head -n "$end_offset"
+    fi
+}
+
 # ── Find next unchecked item ─────────────────────────────────────────────
 
 # Returns line number and text of the first `- [ ]` in plan.md.
@@ -346,12 +408,41 @@ parse_test_failures() {
     fi
 }
 
+# ── Scope enforcement ────────────────────────────────────────────────────
+
+# Warns if Claude modified files outside the expected SOURCE_DIR/ and TEST_DIR/.
+check_scope() {
+    local changed_files
+    changed_files=$(cd "$PROJECT_DIR" && {
+        git diff --name-only 2>/dev/null
+        git ls-files --others --exclude-standard 2>/dev/null
+    })
+    [[ -z "$changed_files" ]] && return 0
+
+    local unexpected=""
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        if [[ "$file" != "$SOURCE_DIR/"* && "$file" != "$TEST_DIR/"* ]]; then
+            unexpected="${unexpected}  ${file}\n"
+        fi
+    done <<< "$changed_files"
+
+    if [[ -n "$unexpected" ]]; then
+        log "WARNING: Files modified outside expected scope ($SOURCE_DIR/, $TEST_DIR/):"
+        echo -e "$unexpected" | while IFS= read -r f; do
+            [[ -n "$f" ]] && log "  $f"
+        done
+    fi
+}
+
 # ── Build the prompt ─────────────────────────────────────────────────────
 
 build_prompt() {
     local checkbox_text="$1"
     local phase_header="$2"
     local story_header="$3"
+    local story_id="${4:-}"
+    local failure_context="${5:-}"
 
     cat <<PROMPT
 You are working on the Strawman Lisp interpreter in $LANG_NAME. Follow strict TDD.
@@ -362,28 +453,49 @@ CURRENT TASK: $checkbox_text
 PHASE: $phase_header
 STORY: $story_header
 
+$(if [[ -n "$story_id" ]]; then
+    echo "TEST MATRIX (from spec.md for $story_id):"
+    extract_test_matrix "$story_id"
+    echo ""
+    echo "Your current task is the row(s) matching: $checkbox_text"
+    echo "Use the exact Input/Expected values from the table above."
+fi)
+
 INSTRUCTIONS — follow this exact sequence:
 
-1. Read spec.md to find the Test Matrix row matching this task.
-2. Read the current source files and test files to understand what exists.
-3. RED: Write a failing test for this specific task in the appropriate test file
+1. Read the current source files and test files to understand what exists.
+2. RED: Write a failing test for this specific task in the appropriate test file
    under $TEST_DIR/. If the test file doesn't exist, create it. Use $TEST_FRAMEWORK.
-4. RED: Run \`$TEST_DIR_CMD\` — confirm the new test FAILS.
+3. RED: Run \`$TEST_DIR_CMD\` — confirm the new test FAILS.
    If it passes already, the test is wrong — make it actually test the behavior.
-5. GREEN: Write the MINIMUM production code in the appropriate $SOURCE_DIR/ file to make
+4. GREEN: Write the MINIMUM production code in the appropriate $SOURCE_DIR/ file to make
    the test pass. If the file doesn't exist, create it with proper
    $FILE_PREAMBLE and appropriate module setup.
-6. GREEN: Run \`$TEST_DIR_CMD\` — confirm ALL tests pass (new + existing).
-7. If any test fails, fix the code (not the test) until all tests pass.
-8. Do a final \`$TEST_DIR_CMD\` to confirm everything is green.
+5. GREEN: Run \`$TEST_DIR_CMD\` — confirm ALL tests pass (new + existing).
+6. If any test fails, fix the code (not the test) until all tests pass.
+7. Do a final \`$TEST_DIR_CMD\` to confirm everything is green.
 
 RULES:
 - Create $SOURCE_DIR/ and $TEST_DIR/ directories if they don't exist.
-- Do NOT modify plan.md — the driver script handles checkboxes.
+- You should only modify files in $SOURCE_DIR/ and $TEST_DIR/.
+- Do NOT modify: plan.md, spec.md, ralph.sh, config.json, CLAUDE.md, README.md
 - Do NOT commit — the driver script handles commits.
 - Do NOT add features beyond what the current task requires.
 - $MODULE_INSTRUCTIONS
 PROMPT
+
+    # Append failure context from previous attempt if retrying
+    if [[ -n "$failure_context" ]]; then
+        cat <<RETRY
+
+PREVIOUS ATTEMPT FAILED. The test runner independently verified your code and it did not pass:
+
+$(echo "$failure_context" | head -80)
+
+Analyze the failure above. Focus on fixing the production code to match the expected
+behavior. Do NOT rewrite tests unless they are genuinely wrong.
+RETRY
+    fi
 }
 
 # ── Auto-commit when story is complete ───────────────────────────────────
@@ -441,6 +553,7 @@ main() {
 
     local consecutive_failures=0
     local last_item=""
+    local LAST_FAILURE_OUTPUT=""
 
     while true; do
         # 1. FIND — next unchecked item
@@ -486,11 +599,14 @@ main() {
         else
             consecutive_failures=0
             last_item="$checkbox_text"
+            LAST_FAILURE_OUTPUT=""
         fi
 
         # 4. BUILD — construct the prompt
+        local story_id
+        story_id=$(extract_story_id "$story_header" "$checkbox_text")
         local prompt
-        prompt=$(build_prompt "$checkbox_text" "$phase_header" "$story_header")
+        prompt=$(build_prompt "$checkbox_text" "$phase_header" "$story_header" "$story_id" "$LAST_FAILURE_OUTPUT")
 
         # Per-task log file
         local task_slug
@@ -499,11 +615,10 @@ main() {
         CURRENT_TASK_LOG="$LOGS_DIR/$(date '+%Y%m%d-%H%M%S')-${task_slug}-attempt${attempt}.log"
 
         if [[ "$DRY_RUN" == true ]]; then
-            log "DRY-RUN: Would invoke claude with:"
-            log "  Task: $checkbox_text"
-            log "  Phase: $phase_header"
-            log "  Story: $story_header"
-            log "DRY-RUN: Marking done and continuing..."
+            log "DRY-RUN: Would invoke claude with prompt:"
+            echo "--- PROMPT BEGIN ---"
+            echo "$prompt"
+            echo "--- PROMPT END ---"
             mark_done "$line_num"
             sleep 1
             continue
@@ -565,6 +680,9 @@ main() {
             log "WARNING: Claude exited with code $claude_exit"
         fi
 
+        # 5b. SCOPE CHECK — warn if files modified outside expected directories
+        check_scope || true
+
         # 6. VERIFY — independently run the test suite
         log "Verifying: $TEST_DIR_CMD..."
         local test_exit=0
@@ -584,6 +702,7 @@ main() {
             log "PASS — all tests green"
             mark_done "$line_num"
             consecutive_failures=0
+            LAST_FAILURE_OUTPUT=""
             log "Marked line $line_num as done"
 
             # 8. COMMIT — if story is complete
@@ -593,6 +712,7 @@ main() {
         else
             log "FAIL — tests did not pass (exit code $test_exit)"
             parse_test_failures "$test_output"
+            LAST_FAILURE_OUTPUT="$test_output"
             log "Full output in: $CURRENT_TASK_LOG"
             log "Will retry this item on next iteration"
         fi
