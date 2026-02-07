@@ -1,0 +1,26 @@
+;; Tower of Hanoi
+;;
+;; Move n disks from peg A to peg C using peg B as auxiliary.
+;; Prints each move step by step.
+
+(define (hanoi n from to aux)
+  (if (= n 0) (quote done)
+    (begin
+      (hanoi (- n 1) from aux to)
+      (display "Move disk ")
+      (display n)
+      (display " from ")
+      (display from)
+      (display " to ")
+      (display to)
+      (newline)
+      (hanoi (- n 1) aux to from))))
+
+(display "--- 3 disks ---")
+(newline)
+(hanoi 3 "A" "C" "B")
+
+(newline)
+(display "--- 4 disks ---")
+(newline)
+(hanoi 4 "A" "C" "B")

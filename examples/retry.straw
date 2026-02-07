@@ -1,0 +1,77 @@
+;; Try/Retry with unwind-protect
+;;
+;; A retry combinator that attempts an operation up to N times.
+;; Uses catch/throw for signaling failure and unwind-protect for cleanup.
+;; Demonstrates Strawman's escape and side-effect features together.
+
+;; A simple counter to simulate flaky operations
+(define attempt-count 0)
+(define cleanup-log (list))
+
+(define (log-cleanup! msg)
+  (set! cleanup-log (cons msg cleanup-log)))
+
+;; retry: try thunk up to max-attempts times
+;; If it throws 'retry, try again. Any other throw propagates.
+(define (retry max-attempts thunk)
+  (letrec ((loop (lambda (n)
+    (if (= n 0)
+      (begin (display "  all attempts exhausted") (newline) #f)
+      (let ((result (catch (quote retry)
+        (unwind-protect
+          (thunk)
+          (log-cleanup! n)))))
+        (if (equal? result (quote failed))
+          (begin
+            (display "  attempt failed, ")
+            (display (- n 1))
+            (display " remaining")
+            (newline)
+            (loop (- n 1)))
+          result))))))
+    (loop max-attempts)))
+
+;; --- Demo 1: operation that fails twice then succeeds ---
+
+(display "=== Demo 1: succeeds on 3rd try ===") (newline)
+(set! attempt-count 0)
+(set! cleanup-log (list))
+
+(define result1 (retry 5 (lambda ()
+  (set! attempt-count (+ attempt-count 1))
+  (if (< attempt-count 3)
+    (throw (quote retry) (quote failed))
+    (begin
+      (display "  success on attempt ")
+      (display attempt-count)
+      (newline)
+      attempt-count)))))
+
+(display "result: ") (display result1) (newline)
+(display "cleanups ran: ") (display cleanup-log) (newline)
+
+;; --- Demo 2: operation that always fails ---
+
+(newline)
+(display "=== Demo 2: always fails ===") (newline)
+(set! attempt-count 0)
+(set! cleanup-log (list))
+
+(define result2 (retry 3 (lambda ()
+  (set! attempt-count (+ attempt-count 1))
+  (throw (quote retry) (quote failed)))))
+
+(display "result: ") (display result2) (newline)
+(display "cleanups ran: ") (display cleanup-log) (newline)
+
+;; --- Demo 3: succeeds immediately ---
+
+(newline)
+(display "=== Demo 3: succeeds immediately ===") (newline)
+(set! cleanup-log (list))
+
+(define result3 (retry 3 (lambda ()
+  42)))
+
+(display "result: ") (display result3) (newline)
+(display "cleanups ran: ") (display cleanup-log) (newline)

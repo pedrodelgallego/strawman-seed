@@ -1,0 +1,67 @@
+;; Mutable Queue
+;;
+;; A FIFO queue using cons cells and set-cdr! for O(1) enqueue.
+;; The queue is a pair: (front . back) where back points to the
+;; last cell so we can append without traversing.
+
+;; A queue is (cons front-sentinel back-pointer)
+;; front-sentinel is a dummy cell whose cdr is the real front.
+(define (make-queue)
+  (let ((sentinel (cons (quote *sentinel*) (quote ()))))
+    (cons sentinel sentinel)))
+
+(define (queue-empty? q)
+  (null? (cdr (car q))))
+
+(define (enqueue! q val)
+  (let ((new-cell (cons val (quote ()))))
+    (set-cdr! (cdr q) new-cell)
+    (set-cdr! q new-cell))
+  (quote ok))
+
+(define (dequeue! q)
+  (if (queue-empty? q)
+    (begin (display "Error: queue is empty") (newline) #f)
+    (let ((front (cdr (car q))))
+      (let ((val (car front)))
+        (set-cdr! (car q) (cdr front))
+        ;; If we just removed the last element, reset back pointer
+        (if (null? (cdr (car q)))
+          (set-cdr! q (car q))
+          (quote ok))
+        val))))
+
+(define (queue-peek q)
+  (if (queue-empty? q) #f
+    (car (cdr (car q)))))
+
+;; Convert queue to list for display
+(define (queue->list q)
+  (letrec ((loop (lambda (cell)
+    (if (null? cell) (quote ())
+      (cons (car cell) (loop (cdr cell)))))))
+    (loop (cdr (car q)))))
+
+;; Demo
+(define q (make-queue))
+
+(display "empty? ") (display (queue-empty? q)) (newline)
+
+(enqueue! q 10)
+(enqueue! q 20)
+(enqueue! q 30)
+(display "after enqueue 10, 20, 30: ") (display (queue->list q)) (newline)
+(display "peek: ") (display (queue-peek q)) (newline)
+
+(display "dequeue: ") (display (dequeue! q)) (newline)
+(display "dequeue: ") (display (dequeue! q)) (newline)
+(display "remaining: ") (display (queue->list q)) (newline)
+
+(enqueue! q 40)
+(enqueue! q 50)
+(display "after enqueue 40, 50: ") (display (queue->list q)) (newline)
+
+(display "dequeue: ") (display (dequeue! q)) (newline)
+(display "dequeue: ") (display (dequeue! q)) (newline)
+(display "dequeue: ") (display (dequeue! q)) (newline)
+(display "empty? ") (display (queue-empty? q)) (newline)

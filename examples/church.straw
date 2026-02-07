@@ -1,0 +1,48 @@
+;; Church Numerals — numbers as pure functions
+;;
+;; A Church numeral n is (lambda (f) (lambda (x) (f (f ... (f x)))))
+;; applied n times. All arithmetic is done with lambdas alone.
+
+;; Church numerals
+(define zero  (lambda (f) (lambda (x) x)))
+(define one   (lambda (f) (lambda (x) (f x))))
+(define two   (lambda (f) (lambda (x) (f (f x)))))
+(define three (lambda (f) (lambda (x) (f (f (f x))))))
+
+;; Successor: add one more application of f
+(define (succ n)
+  (lambda (f) (lambda (x) (f ((n f) x)))))
+
+;; Addition: apply f m times, then n times
+(define (church-add m n)
+  (lambda (f) (lambda (x) ((m f) ((n f) x)))))
+
+;; Multiplication: compose m and n
+(define (church-mul m n)
+  (lambda (f) (n (m f))))
+
+;; Exponentiation: n^m = m applied to n
+(define (church-exp base exp)
+  (exp base))
+
+;; Convert Church numeral to Strawman number
+(define (to-int n)
+  ((n (lambda (x) (+ x 1))) 0))
+
+;; Build larger numbers
+(define four (succ three))
+(define five (succ four))
+
+;; Demo
+(display "zero  = ") (display (to-int zero))  (newline)
+(display "one   = ") (display (to-int one))   (newline)
+(display "two   = ") (display (to-int two))   (newline)
+(display "three = ") (display (to-int three)) (newline)
+(display "four  = ") (display (to-int four))  (newline)
+(display "five  = ") (display (to-int five))  (newline)
+
+(newline)
+(display "3 + 4 = ") (display (to-int (church-add three four))) (newline)
+(display "3 * 4 = ") (display (to-int (church-mul three four))) (newline)
+(display "2 ^ 5 = ") (display (to-int (church-exp two five)))   (newline)
+(display "3 ^ 3 = ") (display (to-int (church-exp three three))) (newline)

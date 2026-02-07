@@ -1,0 +1,177 @@
+;; Metacircular Evaluator
+;;
+;; A tiny Lisp interpreter written in Strawman Lisp.
+;; Supports: numbers, symbols, quote, if, lambda, define, application.
+;; The classic Lisp rite of passage — a language interpreting itself.
+
+;; --- Environment (association list) ---
+
+(define (env-new parent)
+  (cons (list) parent))
+
+(define (env-find env name)
+  (if (null? env) #f
+    (let ((frame (car env)))
+      (letrec ((scan (lambda (bindings)
+        (if (null? bindings) #f
+          (if (equal? (car (car bindings)) name)
+            (car bindings)
+            (scan (cdr bindings)))))))
+        (let ((result (scan frame)))
+          (if (equal? result #f)
+            (if (null? (cdr env)) #f
+              (env-find (cdr env) name))
+            result))))))
+
+(define (env-get env name)
+  (let ((binding (env-find env name)))
+    (if (equal? binding #f)
+      (begin (display "EVAL ERROR: unbound: ")
+             (display name) (newline) #f)
+      (cdr binding))))
+
+(define (env-define! env name val)
+  (set-car! env (cons (cons name val) (car env))))
+
+(define (env-extend parent names vals)
+  (let ((frame (letrec ((zip (lambda (ns vs)
+      (if (null? ns) (list)
+        (cons (cons (car ns) (car vs))
+              (zip (cdr ns) (cdr vs)))))))
+      (zip names vals))))
+    (cons frame parent)))
+
+;; --- Evaluator ---
+
+(define (my-eval expr env)
+  (if (number? expr) expr
+  (if (string? expr) expr
+  (if (boolean? expr) expr
+  (if (symbol? expr) (env-get env expr)
+  (if (not (pair? expr)) expr
+
+    ;; It's a list — check special forms
+    (let ((tag (car expr)))
+
+      (if (equal? tag (quote my-quote))
+        ;; (my-quote datum)
+        (car (cdr expr))
+
+      (if (equal? tag (quote my-if))
+        ;; (my-if test then else)
+        (if (my-eval (car (cdr expr)) env)
+          (my-eval (car (cdr (cdr expr))) env)
+          (if (null? (cdr (cdr (cdr expr))))
+            #f
+            (my-eval (car (cdr (cdr (cdr expr)))) env)))
+
+      (if (equal? tag (quote my-lambda))
+        ;; (my-lambda (params ...) body)
+        ;; Return a closure as a list: (closure params body env)
+        (list (quote closure)
+              (car (cdr expr))
+              (car (cdr (cdr expr)))
+              env)
+
+      (if (equal? tag (quote my-define))
+        ;; (my-define name value)
+        (begin
+          (env-define! env (car (cdr expr))
+                       (my-eval (car (cdr (cdr expr))) env))
+          (quote ok))
+
+      ;; Function application
+      (let ((func (my-eval (car expr) env))
+            (args (my-eval-list (cdr expr) env)))
+        (my-apply func args))))))))
+
+  )))))
+
+(define (my-eval-list exprs env)
+  (if (null? exprs) (list)
+    (cons (my-eval (car exprs) env)
+          (my-eval-list (cdr exprs) env))))
+
+(define (my-apply func args)
+  (if (not (pair? func))
+    (begin (display "EVAL ERROR: not a function") (newline) #f)
+  (if (equal? (car func) (quote closure))
+    (let ((params (car (cdr func)))
+          (body   (car (cdr (cdr func))))
+          (cenv   (car (cdr (cdr (cdr func))))))
+      (my-eval body (env-extend cenv params args)))
+  (if (equal? (car func) (quote primitive))
+    (let ((op (cdr func)))
+      (if (equal? op (quote +)) (+ (car args) (car (cdr args)))
+      (if (equal? op (quote -)) (- (car args) (car (cdr args)))
+      (if (equal? op (quote *)) (* (car args) (car (cdr args)))
+      (if (equal? op (quote <)) (< (car args) (car (cdr args)))
+      (if (equal? op (quote =)) (= (car args) (car (cdr args)))
+        #f))))))
+    (begin (display "EVAL ERROR: bad function") (newline) #f)))))
+
+;; --- Bootstrap environment with primitives ---
+
+(define (make-global-env)
+  (let ((env (env-new (list))))
+    (env-define! env (quote +) (cons (quote primitive) (quote +)))
+    (env-define! env (quote -) (cons (quote primitive) (quote -)))
+    (env-define! env (quote *) (cons (quote primitive) (quote *)))
+    (env-define! env (quote <) (cons (quote primitive) (quote <)))
+    (env-define! env (quote =) (cons (quote primitive) (quote =)))
+    env))
+
+;; --- Run a program (list of expressions) ---
+
+(define (run-program exprs env)
+  (if (null? exprs) (quote done)
+    (begin
+      (my-eval (car exprs) env)
+      (run-program (cdr exprs) env))))
+
+;; --- Demo ---
+
+(define global (make-global-env))
+
+;; Test 1: arithmetic
+(display "1 + 2 = ")
+(display (my-eval (quote (+ 1 2)) global))
+(newline)
+
+;; Test 2: define and use a variable
+(my-eval (quote (my-define x 42)) global)
+(display "x = ")
+(display (my-eval (quote x) global))
+(newline)
+
+;; Test 3: lambda and application
+(display "((lambda (a b) (+ a b)) 3 4) = ")
+(display (my-eval (quote ((my-lambda (a b) (+ a b)) 3 4)) global))
+(newline)
+
+;; Test 4: define a function and call it
+(my-eval (quote (my-define double (my-lambda (n) (+ n n)))) global)
+(display "(double 21) = ")
+(display (my-eval (quote (double 21)) global))
+(newline)
+
+;; Test 5: recursion via self-passing (no letrec in mini-eval)
+;; factorial using the U combinator
+(my-eval (quote (my-define fact-step
+  (my-lambda (self n)
+    (my-if (= n 0) 1
+      (* n (self self (- n 1))))))) global)
+
+(display "(fact 5) = ")
+(display (my-eval (quote (fact-step fact-step 5)) global))
+(newline)
+
+;; Test 6: higher-order — a function returning a function
+(my-eval (quote (my-define make-adder
+  (my-lambda (x) (my-lambda (y) (+ x y))))) global)
+
+(my-eval (quote (my-define add10 (make-adder 10))) global)
+
+(display "(add10 7) = ")
+(display (my-eval (quote (add10 7)) global))
+(newline)

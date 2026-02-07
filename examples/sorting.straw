@@ -1,0 +1,57 @@
+;; Sorting — mergesort on lists
+;;
+;; Splits a list in half, recursively sorts each half,
+;; then merges them back in order.
+
+(define (length lst)
+  (if (null? lst) 0
+    (+ 1 (length (cdr lst)))))
+
+(define (take lst n)
+  (if (= n 0) (quote ())
+    (cons (car lst) (take (cdr lst) (- n 1)))))
+
+(define (drop lst n)
+  (if (= n 0) lst
+    (drop (cdr lst) (- n 1))))
+
+(define (merge a b)
+  (if (null? a) b
+    (if (null? b) a
+      (if (<= (car a) (car b))
+        (cons (car a) (merge (cdr a) b))
+        (cons (car b) (merge a (cdr b)))))))
+
+(define (half n)
+  (/ (- n (mod n 2)) 2))
+
+(define (mergesort lst)
+  (if (null? lst) lst
+    (if (null? (cdr lst)) lst
+      (let ((mid (half (length lst))))
+        (let ((left (take lst mid))
+              (right (drop lst mid)))
+          (merge (mergesort left) (mergesort right)))))))
+
+;; Demo
+(define unsorted (list 38 27 43 3 9 82 10))
+(display "unsorted: ")
+(display unsorted)
+(newline)
+
+(display "sorted:   ")
+(display (mergesort unsorted))
+(newline)
+
+(newline)
+(display "empty:    ")
+(display (mergesort (list)))
+(newline)
+
+(display "single:   ")
+(display (mergesort (list 42)))
+(newline)
+
+(display "reversed: ")
+(display (mergesort (list 5 4 3 2 1)))
+(newline)

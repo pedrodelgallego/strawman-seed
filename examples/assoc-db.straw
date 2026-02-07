@@ -1,0 +1,68 @@
+;; Association List Database
+;;
+;; A key-value store built on lists of pairs.
+;; Supports get, set (functional update), delete, keys, and has?.
+
+(define (assoc-new) (quote ()))
+
+(define (assoc-get db key)
+  (if (null? db) #f
+    (if (equal? (car (car db)) key)
+      (cdr (car db))
+      (assoc-get (cdr db) key))))
+
+(define (assoc-has? db key)
+  (if (null? db) #f
+    (if (equal? (car (car db)) key)
+      #t
+      (assoc-has? (cdr db) key))))
+
+(define (assoc-set db key val)
+  (if (null? db)
+    (list (cons key val))
+    (if (equal? (car (car db)) key)
+      (cons (cons key val) (cdr db))
+      (cons (car db) (assoc-set (cdr db) key val)))))
+
+(define (assoc-delete db key)
+  (if (null? db) (quote ())
+    (if (equal? (car (car db)) key)
+      (cdr db)
+      (cons (car db) (assoc-delete (cdr db) key)))))
+
+(define (assoc-keys db)
+  (if (null? db) (quote ())
+    (cons (car (car db)) (assoc-keys (cdr db)))))
+
+(define (assoc-values db)
+  (if (null? db) (quote ())
+    (cons (cdr (car db)) (assoc-values (cdr db)))))
+
+(define (assoc-size db)
+  (if (null? db) 0
+    (+ 1 (assoc-size (cdr db)))))
+
+;; Demo: a small contacts database
+(define db (assoc-new))
+(set! db (assoc-set db "Alice" 42))
+(set! db (assoc-set db "Bob" 37))
+(set! db (assoc-set db "Carol" 29))
+
+(display "database: ") (display db) (newline)
+(display "keys:     ") (display (assoc-keys db)) (newline)
+(display "size:     ") (display (assoc-size db)) (newline)
+(newline)
+
+(display "Alice -> ") (display (assoc-get db "Alice")) (newline)
+(display "Bob   -> ") (display (assoc-get db "Bob"))   (newline)
+(display "Dave  -> ") (display (assoc-get db "Dave"))  (newline)
+(display "has Bob?  ") (display (assoc-has? db "Bob"))  (newline)
+(display "has Dave? ") (display (assoc-has? db "Dave")) (newline)
+(newline)
+
+;; Update and delete
+(set! db (assoc-set db "Alice" 43))
+(display "Alice is now ") (display (assoc-get db "Alice")) (newline)
+
+(set! db (assoc-delete db "Bob"))
+(display "after deleting Bob: ") (display (assoc-keys db)) (newline)

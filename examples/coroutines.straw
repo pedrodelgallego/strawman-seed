@@ -1,0 +1,55 @@
+;; Coroutines with call/cc
+;;
+;; A producer and consumer that yield control back and forth
+;; using saved continuations. Demonstrates cooperative multitasking
+;; with Strawman's first-class continuations.
+
+;; Saved continuations for each coroutine
+(define resume-producer #f)
+(define resume-consumer #f)
+(define finished #f)
+
+;; yield-to: save my continuation, jump to the other
+(define (yield-to-consumer)
+  (call/cc (lambda (k)
+    (set! resume-producer k)
+    (resume-consumer (quote ok)))))
+
+(define (yield-to-producer)
+  (call/cc (lambda (k)
+    (set! resume-consumer k)
+    (resume-producer (quote ok)))))
+
+(define (producer)
+  (display "  [producer] item 1") (newline)
+  (yield-to-consumer)
+  (display "  [producer] item 2") (newline)
+  (yield-to-consumer)
+  (display "  [producer] item 3") (newline)
+  (yield-to-consumer)
+  (display "  [producer] done") (newline)
+  (set! finished #t)
+  ;; Final yield so consumer can finish
+  (yield-to-consumer))
+
+(define (consumer)
+  (display "  [consumer] got item 1") (newline)
+  (yield-to-producer)
+  (display "  [consumer] got item 2") (newline)
+  (yield-to-producer)
+  (display "  [consumer] got item 3") (newline)
+  (yield-to-producer)
+  (display "  [consumer] done") (newline))
+
+;; Bootstrap: set consumer's entry point, then start producer.
+;; When producer first yields, it jumps to where we captured
+;; resume-consumer — which is right after the call/cc below,
+;; so we then call (consumer) to start the consumer side.
+(display "=== Interleaved coroutines ===") (newline)
+(call/cc (lambda (k)
+  (set! resume-consumer k)
+  (producer)))
+(if (not finished)
+  (consumer)
+  (quote ok))
+(display "=== All done ===") (newline)

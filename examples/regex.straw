@@ -1,0 +1,103 @@
+;; Tiny Regex Matcher
+;;
+;; Matches patterns against lists of symbols.
+;; Patterns:
+;;   (lit x)          — match symbol x
+;;   (seq p1 p2)      — match p1 then p2
+;;   (alt p1 p2)      — match p1 or p2
+;;   (star p)          — match zero or more of p
+;;   (any)             — match any single symbol
+;;
+;; The matcher returns the remaining unmatched input, or #f on failure.
+
+(define (match-pat pat input)
+  (if (null? pat) input
+    (let ((tag (car pat)))
+      (if (equal? tag (quote lit))
+        ;; (lit x) — match a specific symbol
+        (let ((expected (car (cdr pat))))
+          (if (null? input) #f
+            (if (equal? (car input) expected)
+              (cdr input)
+              #f)))
+
+      (if (equal? tag (quote any))
+        ;; (any) — match any single symbol
+        (if (null? input) #f
+          (cdr input))
+
+      (if (equal? tag (quote seq))
+        ;; (seq p1 p2) — match p1 then p2
+        (let ((p1 (car (cdr pat)))
+              (p2 (car (cdr (cdr pat)))))
+          (let ((rest (match-pat p1 input)))
+            (if (equal? rest #f) #f
+              (match-pat p2 rest))))
+
+      (if (equal? tag (quote alt))
+        ;; (alt p1 p2) — try p1, if it fails try p2
+        (let ((p1 (car (cdr pat)))
+              (p2 (car (cdr (cdr pat)))))
+          (let ((result (match-pat p1 input)))
+            (if (equal? result #f)
+              (match-pat p2 input)
+              result)))
+
+      (if (equal? tag (quote star))
+        ;; (star p) — zero or more repetitions (greedy)
+        (let ((p (car (cdr pat))))
+          (letrec ((loop (lambda (inp)
+            (let ((rest (match-pat p inp)))
+              (if (equal? rest #f) inp
+                (loop rest))))))
+            (loop input)))
+
+        #f))))))))
+
+;; Full match: pattern must consume all input
+(define (matches? pat input)
+  (let ((rest (match-pat pat input)))
+    (if (equal? rest #f) #f
+      (null? rest))))
+
+;; Helper to display a test result
+(define (test name expected actual)
+  (display name)
+  (display ": ")
+  (display (if (equal? expected actual) "PASS" "FAIL"))
+  (if (not (equal? expected actual))
+    (begin (display " (expected ") (display expected)
+           (display ", got ") (display actual) (display ")"))
+    (quote ok))
+  (newline))
+
+;; Pattern: a b
+(define pat-ab (list (quote seq) (list (quote lit) (quote a))
+                                  (list (quote lit) (quote b))))
+
+(test "ab matches (a b)"     #t (matches? pat-ab (list (quote a) (quote b))))
+(test "ab rejects (a c)"     #f (matches? pat-ab (list (quote a) (quote c))))
+(test "ab rejects (a)"       #f (matches? pat-ab (list (quote a))))
+
+;; Pattern: a | b
+(define pat-aorb (list (quote alt) (list (quote lit) (quote a))
+                                    (list (quote lit) (quote b))))
+
+(test "a|b matches (a)"      #t (matches? pat-aorb (list (quote a))))
+(test "a|b matches (b)"      #t (matches? pat-aorb (list (quote b))))
+(test "a|b rejects (c)"      #f (matches? pat-aorb (list (quote c))))
+
+;; Pattern: a*
+(define pat-astar (list (quote star) (list (quote lit) (quote a))))
+
+(test "a* matches ()"         #t (matches? pat-astar (list)))
+(test "a* matches (a)"        #t (matches? pat-astar (list (quote a))))
+(test "a* matches (a a a)"    #t (matches? pat-astar (list (quote a) (quote a) (quote a))))
+(test "a* rejects (a b)"      #f (matches? pat-astar (list (quote a) (quote b))))
+
+;; Pattern: a* b — zero or more a's followed by b
+(define pat-astarb (list (quote seq) (list (quote star) (list (quote lit) (quote a)))
+                                      (list (quote lit) (quote b))))
+
+(test "a*b matches (b)"       #t (matches? pat-astarb (list (quote b))))
+(test "a*b matches (a a b)"   #t (matches? pat-astarb (list (quote a) (quote a) (quote b))))

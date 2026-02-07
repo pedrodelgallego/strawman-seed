@@ -1,0 +1,129 @@
+;; Matrix Math with Vectors
+;;
+;; Matrices are vectors of row-vectors.
+;; Implements: create, get, set, add, multiply, transpose, display.
+
+;; Create an r x c matrix filled with val
+(define (mat-new r c val)
+  (let ((m (make-vector r 0)))
+    (letrec ((loop (lambda (i)
+      (if (= i r) m
+        (begin
+          (vector-set! m i (make-vector c val))
+          (loop (+ i 1)))))))
+      (loop 0))))
+
+(define (mat-rows m) (vector-length m))
+(define (mat-cols m) (vector-length (vector-ref m 0)))
+
+(define (mat-get m r c)
+  (vector-ref (vector-ref m r) c))
+
+(define (mat-set! m r c val)
+  (vector-set! (vector-ref m r) c val))
+
+;; Build a matrix from a list of lists
+(define (mat-from-lists rows)
+  (let ((nrows (letrec ((len (lambda (lst)
+          (if (null? lst) 0 (+ 1 (len (cdr lst)))))))
+          (len rows))))
+    (let ((m (mat-new nrows (letrec ((len (lambda (lst)
+            (if (null? lst) 0 (+ 1 (len (cdr lst)))))))
+            (len (car rows))) 0)))
+      (letrec ((fill-rows (lambda (rs i)
+        (if (null? rs) m
+          (begin
+            (letrec ((fill-cols (lambda (cs j)
+              (if (null? cs) (quote ok)
+                (begin
+                  (mat-set! m i j (car cs))
+                  (fill-cols (cdr cs) (+ j 1)))))))
+              (fill-cols (car rs) 0))
+            (fill-rows (cdr rs) (+ i 1)))))))
+        (fill-rows rows 0)))))
+
+;; Add two matrices
+(define (mat-add a b)
+  (let ((r (mat-rows a)) (c (mat-cols a)))
+    (let ((result (mat-new r c 0)))
+      (letrec ((loop-r (lambda (i)
+        (if (= i r) result
+          (begin
+            (letrec ((loop-c (lambda (j)
+              (if (= j c) (quote ok)
+                (begin
+                  (mat-set! result i j (+ (mat-get a i j) (mat-get b i j)))
+                  (loop-c (+ j 1)))))))
+              (loop-c 0))
+            (loop-r (+ i 1)))))))
+        (loop-r 0)))))
+
+;; Multiply two matrices (a: r1 x c1, b: c1 x c2 => r1 x c2)
+(define (mat-mul a b)
+  (let ((r1 (mat-rows a)) (c1 (mat-cols a)) (c2 (mat-cols b)))
+    (let ((result (mat-new r1 c2 0)))
+      (letrec ((loop-r (lambda (i)
+        (if (= i r1) result
+          (begin
+            (letrec ((loop-c (lambda (j)
+              (if (= j c2) (quote ok)
+                (begin
+                  (letrec ((dot (lambda (k acc)
+                    (if (= k c1) acc
+                      (dot (+ k 1) (+ acc (* (mat-get a i k) (mat-get b k j))))))))
+                    (mat-set! result i j (dot 0 0)))
+                  (loop-c (+ j 1)))))))
+              (loop-c 0))
+            (loop-r (+ i 1)))))))
+        (loop-r 0)))))
+
+;; Transpose
+(define (mat-transpose m)
+  (let ((r (mat-rows m)) (c (mat-cols m)))
+    (let ((result (mat-new c r 0)))
+      (letrec ((loop-r (lambda (i)
+        (if (= i r) result
+          (begin
+            (letrec ((loop-c (lambda (j)
+              (if (= j c) (quote ok)
+                (begin
+                  (mat-set! result j i (mat-get m i j))
+                  (loop-c (+ j 1)))))))
+              (loop-c 0))
+            (loop-r (+ i 1)))))))
+        (loop-r 0)))))
+
+;; Print a matrix
+(define (mat-print m)
+  (letrec ((loop (lambda (i)
+    (if (= i (mat-rows m)) (quote ok)
+      (begin
+        (display "  ")
+        (letrec ((cols (lambda (j)
+          (if (= j (mat-cols m)) (quote ok)
+            (begin
+              (display (mat-get m i j))
+              (display " ")
+              (cols (+ j 1)))))))
+          (cols 0))
+        (newline)
+        (loop (+ i 1)))))))
+    (loop 0)))
+
+;; Demo
+(define a (mat-from-lists (list (list 1 2) (list 3 4))))
+(define b (mat-from-lists (list (list 5 6) (list 7 8))))
+
+(display "A:") (newline) (mat-print a)
+(display "B:") (newline) (mat-print b)
+
+(display "A + B:") (newline) (mat-print (mat-add a b))
+(display "A * B:") (newline) (mat-print (mat-mul a b))
+(display "A transposed:") (newline) (mat-print (mat-transpose a))
+
+;; 3x2 * 2x3
+(define c (mat-from-lists (list (list 1 2 3) (list 4 5 6))))
+(define d (mat-from-lists (list (list 7 8) (list 9 10) (list 11 12))))
+(display "C (2x3):") (newline) (mat-print c)
+(display "D (3x2):") (newline) (mat-print d)
+(display "C * D (2x2):") (newline) (mat-print (mat-mul c d))
