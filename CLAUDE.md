@@ -183,4 +183,5 @@ The autonomous driver that builds the interpreter without human coding:
 - Division by zero: `"division by zero"`
 - Car/cdr on non-pair: `"car: expected pair"` / `"cdr: expected pair"`
 - Type errors: `"expected number"`, `"expected pair"`, etc.
+- Special form errors: `"quote: expected exactly one argument"`, `"if: expected 2 or 3 arguments"`, `"lambda: expected parameter list"`, `"define: expected at least 2 arguments"`
 - The REPL catches all errors, prints `Error: <message>`, and continues

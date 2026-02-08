@@ -473,9 +473,64 @@ validate_context() {
 
 # ── Find next unchecked item ─────────────────────────────────────────────
 
+# ── Plan file integrity ───────────────────────────────────────────────────
+
+# Checksum of plan.md at the time we read from it.
+PLAN_CHECKSUM=""
+
+plan_checksum() {
+    md5 -q "$PLAN" 2>/dev/null || md5sum "$PLAN" 2>/dev/null | awk '{print $1}'
+}
+
+snapshot_plan() {
+    PLAN_CHECKSUM=$(plan_checksum)
+}
+
+# Verify plan.md hasn't been modified externally since we last read it.
+# If it has, re-locate the item by matching its full text content.
+# Returns the (possibly updated) line number.
+verify_plan_line() {
+    local expected_line="$1"
+    local checkbox_text="$2"
+    local current_checksum
+    current_checksum=$(plan_checksum)
+
+    if [[ "$current_checksum" == "$PLAN_CHECKSUM" ]]; then
+        # Plan unchanged — line number is still valid
+        echo "$expected_line"
+        return 0
+    fi
+
+    log "${YELLOW}WARNING:${RESET} plan.md was modified externally — re-locating task by content"
+
+    # Escape special regex chars in the checkbox text for grep
+    local escaped
+    escaped=$(printf '%s' "$checkbox_text" | sed 's/[.[\*^$()+?{|]/\\&/g')
+
+    local new_match
+    new_match=$(grep -n "^ *- \[ \] ${escaped}$" "$PLAN" | head -1) || true
+
+    if [[ -z "$new_match" ]]; then
+        # Item may have been checked off externally or deleted
+        log "${YELLOW}WARNING:${RESET} Task no longer found as unchecked in plan.md — skipping"
+        echo ""
+        return 1
+    fi
+
+    local new_line
+    new_line=$(echo "$new_match" | cut -d: -f1)
+    log "${DIM}Task relocated: line $expected_line → line $new_line${RESET}"
+    echo "$new_line"
+    return 0
+}
+
+# ── Find next unchecked item ─────────────────────────────────────────────
+
 # Returns line number and text of the first `- [ ]` in plan.md.
 # Returns empty if plan is complete.
 find_next_item() {
+    # Snapshot the plan checksum so we can detect external edits later
+    snapshot_plan
     # Find first unchecked `- [ ]` line, whether indented or not
     local match
     match=$(grep -n '^ *- \[ \]' "$PLAN" | head -1) || true
@@ -484,18 +539,28 @@ find_next_item() {
 
 # ── Mark item as done ────────────────────────────────────────────────────
 
+MARK_DONE_LINE=""  # Set by mark_done for callers that need the verified line
+
 mark_done() {
     local line_num="$1"
-    # Backup plan.md before modifying (atomic: write temp, then move)
+    local checkbox_text="$2"
+
+    # Re-verify the line number is still correct (plan may have been edited)
+    local verified_line
+    verified_line=$(verify_plan_line "$line_num" "$checkbox_text") || return 1
+    [[ -z "$verified_line" ]] && return 1
+    line_num="$verified_line"
+    MARK_DONE_LINE="$line_num"
+
+    # Atomic write: copy → sed → move
     local tmp="${PLAN}.tmp.$$"
     cp "$PLAN" "$tmp"
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed "${line_num}s/- \[ \]/- [x]/" "$tmp" > "${tmp}.new"
-    else
-        sed "${line_num}s/- \[ \]/- [x]/" "$tmp" > "${tmp}.new"
-    fi
+    sed "${line_num}s/- \[ \]/- [x]/" "$tmp" > "${tmp}.new"
     mv "${tmp}.new" "$PLAN"
     rm -f "$tmp"
+
+    # Update checksum after our own modification
+    snapshot_plan
 }
 
 # ── Check if a story block is fully done ─────────────────────────────────
@@ -1177,7 +1242,7 @@ main() {
             echo "--- PROMPT BEGIN ---"
             echo "$prompt"
             echo "--- PROMPT END ---"
-            mark_done "$line_num"
+            mark_done "$line_num" "$checkbox_text"
             sleep 1
             continue
         fi
@@ -1294,17 +1359,20 @@ main() {
             run_lint
             run_coverage
             validate_context
-            mark_done "$line_num"
+            mark_done "$line_num" "$checkbox_text" || {
+                log "${YELLOW}WARNING:${RESET} Could not mark task done — plan.md may have changed"
+                continue
+            }
             consecutive_failures=0
             LAST_FAILURE_OUTPUT=""
-            log "${DIM}Marked line $line_num as done${RESET}"
+            log "${DIM}Marked task as done${RESET}"
 
             # 8. COMMIT & REFLECT — if story is complete
-            if check_story_complete "$line_num"; then
+            if check_story_complete "$MARK_DONE_LINE"; then
                 auto_commit "$story_header" "$phase_header"
 
                 # Check if the entire phase (epic) is also complete
-                if check_phase_complete "$line_num"; then
+                if check_phase_complete "$MARK_DONE_LINE"; then
                     run_integration_tests "$phase_header" || {
                         log "${YELLOW}WARNING:${RESET} Integration tests failed — continuing but review needed"
                     }

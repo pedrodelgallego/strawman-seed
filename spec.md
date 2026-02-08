@@ -28,7 +28,7 @@ So that **downstream phases (parser) operate on clean, classified units instead 
 - `tokenize : string -> (listof token)` is the sole public interface
 - Token types: `LPAREN`, `RPAREN`, `NUMBER`, `STRING`, `SYMBOL`, `BOOLEAN`
 - Numbers: integers (`42`, `-3`) and floats (`3.14`, `-0.5`)
-- Strings: delimited by `"`, supporting `\"` and `\\` escapes
+- Strings: delimited by `"`, supporting only `\"` (escaped quote) and `\\` (escaped backslash) escapes. Other backslash sequences like `\n` are not recognized — `\n` is two literal characters
 - Symbols: any sequence of non-whitespace, non-paren chars that isn't a number, string, or boolean (includes `+`, `-`, `<=`, `define`, `foo?`, `set!`)
 - Booleans: `#t` and `#f` only
 - Comments: `;` discards to end of line
@@ -98,7 +98,7 @@ So that **the evaluator receives structured, tree-shaped data instead of a linea
 
 ##### Non-functional
 - Correctness: `(read-from-string "(+ 1 2)")` must produce the list `'(+ 1 2)` where `+` is a symbol
-- Diagnostics: unmatched `)` → error with "unexpected closing paren"; unmatched `(` → error with "unexpected end of input"; empty input → error with "empty input"
+- Diagnostics: unmatched `)` → error with "unexpected closing paren"; unmatched `(` → error with "unexpected end of input"; `read-from-string ""` (empty token list) → error with "empty input". Note: `read-all-from-string ""` returns `'()` (no expressions), it is only `read-from-string` that errors on empty input
 - Compatibility: the parsed AST uses standard Racket values so the evaluator needs no intermediate representation
 
 #### Test Matrix
@@ -170,7 +170,7 @@ So that **the evaluator can implement lexical scoping, `define`, `set!`, and fun
 | Update existing | set `x`→1, update `x`→2, lookup `x` | `2` |
 | Update unbound | update `y` in empty env | Error: `"cannot set! unbound variable: y"` |
 | Extend | extend env with `(a b)` → `(1 2)` | child lookup `a`→`1`, `b`→`2` |
-| Extend arity mismatch | extend with `(a b)` → `(1)` | Error: arity mismatch |
+| Extend arity mismatch | extend with `(a b)` → `(1)` | Error: arity mismatch: expected 2, got 1 |
 | Parent not mutated | extend, set `x` in child | parent lookup `x` → unbound |
 
 #### Acceptance Criteria
@@ -258,7 +258,7 @@ So that **I can treat code as data and construct symbolic expressions**
 
 ##### Non-functional
 - Correctness: the returned value must be structurally identical to the datum in the source
-- Diagnostics: `(quote)` or `(quote a b)` → error `"quote expects exactly one argument"`
+- Diagnostics: `(quote)` or `(quote a b)` → error `"quote: expected exactly one argument"`
 
 #### Test Matrix
 | Case | Input | Expected |
@@ -268,8 +268,10 @@ So that **I can treat code as data and construct symbolic expressions**
 | Quote list | `(quote (1 2 3))` | `'(1 2 3)` |
 | Quote nested | `(quote (a (b c)))` | `'(a (b c))` |
 | Quote empty list | `(quote ())` | `'()` |
-| No args | `(quote)` | Error: quote expects exactly one argument |
-| Too many args | `(quote a b)` | Error: quote expects exactly one argument |
+| Quote of special form | `(quote (if #t 1 2))` | `'(if #t 1 2)` |
+| Quote of quote | `(quote (quote foo))` | `'(quote foo)` |
+| No args | `(quote)` | Error: quote: expected exactly one argument |
+| Too many args | `(quote a b)` | Error: quote: expected exactly one argument |
 
 #### Acceptance Criteria
 1. **Given** `(quote (+ 1 2))`
@@ -302,7 +304,7 @@ So that **I can write conditional logic and the non-taken branch has no side eff
 
 ##### Non-functional
 - Correctness: the non-taken branch must NOT be evaluated (verifiable via side effects)
-- Diagnostics: `(if)` or `(if test)` with wrong arity → error `"if expects 2 or 3 arguments"`
+- Diagnostics: `(if)` or `(if test)` with wrong arity → error `"if: expected 2 or 3 arguments"`
 
 #### Test Matrix
 | Case | Input | Expected |
@@ -314,7 +316,7 @@ So that **I can write conditional logic and the non-taken branch has no side eff
 | No alternative (true) | `(if #t 42)` | `42` |
 | No alternative (false) | `(if #f 42)` | `(void)` |
 | Non-taken not evaled | `(if #t 1 (error "boom"))` | `1` (no error) |
-| No args | `(if)` | Error: if expects 2 or 3 arguments |
+| No args | `(if)` | Error: if: expected 2 or 3 arguments |
 
 #### Acceptance Criteria
 1. **Given** `(if (> 3 2) "yes" "no")`
@@ -384,7 +386,7 @@ So that **I can name values and update state when needed**
 
 #### Requirements
 ##### Functional
-- `(define name expr)` — evaluate `expr`, bind `name` in the current frame
+- `(define name expr)` — bind `name` in the current frame (initially unset), then evaluate `expr` and store the result. Because the binding exists before `expr` is evaluated, a lambda in `expr` can capture `name` and call it recursively.
 - `(set! name expr)` — evaluate `expr`, update the nearest existing binding of `name`
 - `define` returns `void`
 - `set!` returns `void`
@@ -392,7 +394,7 @@ So that **I can name values and update state when needed**
 
 ##### Non-functional
 - Correctness: `define` always writes to the current frame; `set!` walks the chain
-- Diagnostics: `(set! unbound 1)` → `"cannot set! unbound variable: unbound"`; `(define)` → arity error
+- Diagnostics: `(set! unbound 1)` → `"cannot set! unbound variable: unbound"`; `(define)` → `"define: expected at least 2 arguments"`
 
 #### Test Matrix
 | Case | Input | Expected |
@@ -402,7 +404,9 @@ So that **I can name values and update state when needed**
 | Define expr | `(begin (define x (+ 1 2)) x)` | `3` |
 | Set! existing | `(begin (define x 1) (set! x 99) x)` | `99` |
 | Set! parent | `(begin (define x 1) ((lambda () (set! x 5))) x)` | `5` |
-| Set! unbound | `(set! z 1)` | Error: cannot set! unbound variable |
+| Set! unbound | `(set! z 1)` | Error: cannot set! unbound variable: z |
+| Set! shadowed | `(begin (define x 1) (let ((x 10)) (set! x 99) x))` | `99` |
+| Set! shadow parent unchanged | `(begin (define x 1) (let ((x 10)) (set! x 99)) x)` | `1` |
 | Define returns void | `(define x 1)` | `(void)` |
 
 #### Acceptance Criteria
@@ -434,11 +438,11 @@ So that **I can define reusable abstractions, pass functions as values, and buil
 - The closure captures the environment at the point of creation
 - The body is evaluated in an extended environment where params are bound to arguments
 - A closure is a distinct value type (not a Racket procedure)
-- Body may be multiple expressions (implicit `begin`)
+- Body may be multiple expressions (implicit `begin`). A `define` inside a body creates a local binding in the call's environment — it does not escape to the enclosing scope and does not persist across calls
 
 ##### Non-functional
 - Correctness: free variables in the body resolve in the captured env, not the call-site env
-- Diagnostics: `(lambda)` → error; `(lambda "bad" body)` → error about param list format
+- Diagnostics: `(lambda)` → error; `(lambda "bad" body)` → error `"lambda: expected parameter list"`
 
 #### Test Matrix
 | Case | Input | Expected |
@@ -449,8 +453,8 @@ So that **I can define reusable abstractions, pass functions as values, and buil
 | Closure over closure | `(begin (define make-adder (lambda (n) (lambda (x) (+ n x)))) ((make-adder 3) 7))` | `10` |
 | Implicit begin | `((lambda (x) (define y 1) (+ x y)) 5)` | `6` |
 | No params | `((lambda () 42))` | `42` |
-| Wrong arity | `((lambda (x) x) 1 2)` | Error: arity mismatch |
-| Bad param list | `(lambda 42 x)` | Error: expected parameter list |
+| Wrong arity | `((lambda (x) x) 1 2)` | Error: arity mismatch: expected 1, got 2 |
+| Bad param list | `(lambda 42 x)` | Error: lambda: expected parameter list |
 
 #### Acceptance Criteria
 1. **Given** `(begin (define make-counter (lambda () (define n 0) (lambda () (set! n (+ n 1)) n))) (define c (make-counter)) (c) (c) (c))`
@@ -494,8 +498,8 @@ So that **both user-defined closures and built-in primitives can be invoked unif
 | Closure call | `((lambda (x) (* x x)) 5)` | `25` |
 | Nested call | `(+ (* 2 3) (- 10 4))` | `12` |
 | Higher-order | `((lambda (f x) (f x)) (lambda (n) (* n 2)) 5)` | `10` |
-| Non-procedure | `(42)` | Error: not a procedure |
-| Non-procedure string | `("hello" 1)` | Error: not a procedure |
+| Non-procedure | `(42)` | Error: not a procedure: 42 |
+| Non-procedure string | `("hello" 1)` | Error: not a procedure: "hello" |
 
 #### Acceptance Criteria
 1. **Given** `(+ 1 2 3 4)`
@@ -525,7 +529,7 @@ So that **I can perform numeric computation without defining these myself**
 - `+` : variadic, `(+)` → `0`, `(+ a)` → `a`, `(+ a b ...)` → sum
 - `-` : `(- a)` → negation, `(- a b ...)` → left fold subtraction
 - `*` : variadic, `(*)` → `1`, `(* a b ...)` → product
-- `/` : `(/ a b)` → quotient (integer div if both int, else float)
+- `/` : `(/ a b)` → quotient; returns integer if result is exact (e.g. `10/2`→`5`), float otherwise (e.g. `7/2`→`3.5`)
 - `mod` : `(mod a b)` → remainder
 
 ##### Non-functional
@@ -654,8 +658,8 @@ So that **I can construct and destructure lists, the fundamental Lisp data struc
 | Pair? pair | `(pair? '(1 2))` | `#t` |
 | Pair? empty | `(pair? '())` | `#f` |
 | Pair? atom | `(pair? 42)` | `#f` |
-| Car of empty | `(car '())` | Error: car expects pair |
-| Cdr of atom | `(cdr 42)` | Error: cdr expects pair |
+| Car of empty | `(car '())` | Error: car: expected pair |
+| Cdr of atom | `(cdr 42)` | Error: cdr: expected pair |
 
 #### Acceptance Criteria
 1. **Given** `(car (cdr (list 1 2 3)))`
@@ -874,7 +878,7 @@ So that **I can introduce temporary names without polluting the outer scope**
 | Body implicit begin | `(let ((x 1)) (define y 2) (+ x y))` | `3` |
 | Nested let | `(let ((x 1)) (let ((y 2)) (+ x y)))` | `3` |
 | Empty bindings | `(let () 42)` | `42` |
-| Malformed | `(let (x 1) x)` | Error: malformed binding |
+| Malformed | `(let (x 1) x)` | Error: let: malformed binding |
 
 #### Acceptance Criteria
 1. **Given** `(let ((a 1) (b 2)) (+ a b))`
@@ -941,7 +945,7 @@ So that **I can define mutually recursive local functions**
 
 ##### Non-functional
 - Correctness: `(letrec ((f (lambda () (g))) (g (lambda () 1))) (f))` must work
-- Diagnostics: accessing an uninitialized letrec binding before its lambda is set → undefined behavior or error
+- Diagnostics: accessing an uninitialized letrec binding before its initializer runs → error `"letrec: variable used before initialization"`
 
 #### Test Matrix
 | Case | Input | Expected |
@@ -950,6 +954,7 @@ So that **I can define mutually recursive local functions**
 | Mutual recursion | `(letrec ((even? (lambda (n) (if (= n 0) #t (odd? (- n 1))))) (odd? (lambda (n) (if (= n 0) #f (even? (- n 1)))))) (even? 4))` | `#t` |
 | Mutual odd | (same as above) `(odd? 3)` in body | `#t` |
 | Non-lambda | `(letrec ((x 42)) x)` | `42` |
+| Uninitialized use | `(letrec ((x y) (y 1)) x)` | Error: letrec: variable used before initialization |
 
 #### Acceptance Criteria
 1. **Given** the mutual even?/odd? letrec above
@@ -990,6 +995,7 @@ So that **function definitions are less verbose**
 | With body | `(begin (define (g x) (define y 1) (+ x y)) (g 5))` | `6` |
 | Recursive | `(begin (define (fact n) (if (<= n 1) 1 (* n (fact (- n 1))))) (fact 5))` | `120` |
 | No params | `(begin (define (f) 42) (f))` | `42` |
+| Local scope | `((lambda () (define (f x) (* x x)) (f 3)))` | `9` |
 
 #### Acceptance Criteria
 1. **Given** `(begin (define (square x) (* x x)) (square 9))`
@@ -1023,7 +1029,7 @@ So that **I can trust the interpreter with real programs like factorial, fibonac
 | Case | Input | Expected |
 |---|---|---|
 | Factorial 0 | `(begin (define (fact n) (if (<= n 1) 1 (* n (fact (- n 1))))) (fact 0))` | `1` |
-| Factorial 10 | `(fact 10)` | `3628800` |
+| Factorial 10 | `(begin (define (fact n) (if (<= n 1) 1 (* n (fact (- n 1))))) (fact 10))` | `3628800` |
 | Fibonacci | `(begin (define (fib n) (if (<= n 1) n (+ (fib (- n 1)) (fib (- n 2))))) (fib 10))` | `55` |
 | Map | `(begin (define (map f lst) (if (null? lst) '() (cons (f (car lst)) (map f (cdr lst))))) (map (lambda (x) (* x x)) '(1 2 3 4)))` | `'(1 4 9 16)` |
 | Filter | `(begin (define (filter p lst) (if (null? lst) '() (if (p (car lst)) (cons (car lst) (filter p (cdr lst))) (filter p (cdr lst))))) (filter (lambda (x) (> x 2)) '(1 2 3 4 5)))` | `'(3 4 5)` |
@@ -1116,7 +1122,7 @@ So that **I can implement non-local exits, coroutines, and other advanced contro
 | Early exit | `(call/cc (lambda (k) (k 10) 20))` | `10` |
 | In expression | `(+ 1 (call/cc (lambda (k) (k 5))))` | `6` |
 | Saved continuation | `(begin (define saved #f) (+ 1 (call/cc (lambda (k) (set! saved k) 10))) )` | `11`, and `(saved 20)` → `21` |
-| Non-procedure | `(call/cc 42)` | Error: expected procedure |
+| Non-procedure | `(call/cc 42)` | Error: call/cc: expected procedure |
 
 #### Acceptance Criteria
 1. **Given** `(+ 1 (call/cc (lambda (k) (+ 2 (k 3)))))`
@@ -2013,7 +2019,7 @@ So that **I can create and inspect structured objects**
 | Mutate | `(begin (set-Point-x! p 99) (Point-x p))` | `99` |
 | Predicate yes | `(Point? p)` | `#t` |
 | Predicate no | `(Point? 42)` | `#f` |
-| Wrong arity | `(make-Point 1)` | Error: arity mismatch |
+| Wrong arity | `(make-Point 1)` | Error: arity mismatch: expected 2, got 1 |
 | Wrong type | `(Point-x 42)` | Error: expected Point |
 
 #### Acceptance Criteria
