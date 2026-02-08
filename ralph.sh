@@ -32,6 +32,8 @@ LOCK_FILE="$PROJECT_DIR/.ralph.lock"
 MAX_RETRIES=3
 MAX_LOG_BYTES=$((10 * 1024 * 1024))  # 10 MB
 CLAUDE_TIMEOUT=600                    # 10 minutes per task
+MAX_COST_USD=50                       # Session cost cap ($)
+MAX_ITERATIONS=200                    # Safety cap on loop iterations
 DRY_RUN=false
 CONFIG="$PROJECT_DIR/config.json"
 CONTEXT_FILE="$PROJECT_DIR/context.md"
@@ -91,6 +93,7 @@ cleanup() {
     rm -f "$PROJECT_DIR"/logs/.snapshot-$$.* 2>/dev/null || true
     rm -f "$PROJECT_DIR"/logs/.snapshot-$$ 2>/dev/null || true
     rm -f /tmp/.ralph-cost-$$ 2>/dev/null || true
+    rm -f "${PLAN}.tmp.$$" "${PLAN}.tmp.$$.new" 2>/dev/null || true
     release_lock
     exit "$exit_code"
 }
@@ -133,6 +136,18 @@ rotate_log() {
     if [[ $size -gt $MAX_LOG_BYTES ]]; then
         mv "$LOG" "${LOG}.1"
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] Log rotated (previous log: ${LOG}.1)" > "$LOG"
+    fi
+}
+
+# ── Disk space check ─────────────────────────────────────────────────────
+
+check_disk_space() {
+    local min_mb=100
+    local avail_kb
+    avail_kb=$(df -k "$PROJECT_DIR" | awk 'NR==2 {print $4}')
+    if [[ -n "$avail_kb" && "$avail_kb" -lt $((min_mb * 1024)) ]]; then
+        log "${RED}ERROR:${RESET} Less than ${min_mb}MB disk space remaining (${avail_kb}KB). Stopping to prevent corruption."
+        exit 1
     fi
 }
 
@@ -198,6 +213,23 @@ preflight_checks() {
         fi
     done
     if [[ $missing -ne 0 ]]; then exit 1; fi
+}
+
+check_git_clean() {
+    local dirty
+    dirty=$(cd "$PROJECT_DIR" && git diff --name-only -- "$SOURCE_DIR/" "$TEST_DIR/" 2>/dev/null || true)
+    local untracked
+    untracked=$(cd "$PROJECT_DIR" && git ls-files --others --exclude-standard -- "$SOURCE_DIR/" "$TEST_DIR/" 2>/dev/null || true)
+
+    if [[ -n "$dirty" || -n "$untracked" ]]; then
+        log "${YELLOW}WARNING:${RESET} Uncommitted changes in $SOURCE_DIR/ or $TEST_DIR/:"
+        [[ -n "$dirty" ]] && echo "$dirty" | while IFS= read -r f; do log "  ${YELLOW}modified:${RESET} $f"; done
+        [[ -n "$untracked" ]] && echo "$untracked" | while IFS= read -r f; do log "  ${YELLOW}untracked:${RESET} $f"; done
+        log ""
+        log "${RED}Ralph resets the working tree between retries and on failure.${RESET}"
+        log "${RED}These changes WILL be lost. Commit or stash them first.${RESET}"
+        exit 1
+    fi
 }
 
 show_plan_summary() {
@@ -454,12 +486,16 @@ find_next_item() {
 
 mark_done() {
     local line_num="$1"
-    # Replace `- [ ]` with `- [x]` on the specific line
+    # Backup plan.md before modifying (atomic: write temp, then move)
+    local tmp="${PLAN}.tmp.$$"
+    cp "$PLAN" "$tmp"
     if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' "${line_num}s/- \[ \]/- [x]/" "$PLAN"
+        sed "${line_num}s/- \[ \]/- [x]/" "$tmp" > "${tmp}.new"
     else
-        sed -i "${line_num}s/- \[ \]/- [x]/" "$PLAN"
+        sed "${line_num}s/- \[ \]/- [x]/" "$tmp" > "${tmp}.new"
     fi
+    mv "${tmp}.new" "$PLAN"
+    rm -f "$tmp"
 }
 
 # ── Check if a story block is fully done ─────────────────────────────────
@@ -754,7 +790,7 @@ reset_working_tree() {
 
 # ── Scope enforcement ────────────────────────────────────────────────────
 
-# Warns if Claude modified files outside the expected SOURCE_DIR/ and TEST_DIR/.
+# Reverts changes Claude made outside the expected SOURCE_DIR/ and TEST_DIR/.
 check_scope() {
     local changed_files
     changed_files=$(cd "$PROJECT_DIR" && {
@@ -763,19 +799,21 @@ check_scope() {
     })
     [[ -z "$changed_files" ]] && return 0
 
-    local unexpected=""
+    local reverted=false
     while IFS= read -r file; do
         [[ -z "$file" ]] && continue
         if [[ "$file" != "$SOURCE_DIR/"* && "$file" != "$TEST_DIR/"* && "$file" != "context.md" && "$file" != "suggestions.md" ]]; then
-            unexpected="${unexpected}  ${file}\n"
+            log "${RED}SCOPE VIOLATION:${RESET} Reverting unauthorized change to ${BOLD}$file${RESET}"
+            (cd "$PROJECT_DIR" && {
+                # Revert tracked files; delete untracked ones
+                git checkout -- "$file" 2>/dev/null || rm -f "$file" 2>/dev/null || true
+            })
+            reverted=true
         fi
     done <<< "$changed_files"
 
-    if [[ -n "$unexpected" ]]; then
-        log "${YELLOW}WARNING:${RESET} Files modified outside expected scope ($SOURCE_DIR/, $TEST_DIR/):"
-        echo -e "$unexpected" | while IFS= read -r f; do
-            [[ -n "$f" ]] && log "  $f"
-        done
+    if [[ "$reverted" == true ]]; then
+        log "${YELLOW}WARNING:${RESET} Unauthorized file changes were reverted. Only $SOURCE_DIR/, $TEST_DIR/, context.md, suggestions.md are allowed."
     fi
 }
 
@@ -1037,8 +1075,11 @@ main() {
     preflight_checks
     acquire_lock
     load_config
+    check_git_clean
+    check_disk_space
 
     RALPH_START_TIME=$(date +%s)
+    ITERATION=0
     LOGS_DIR="$PROJECT_DIR/logs"
     mkdir -p "$LOGS_DIR"
     rotate_log
@@ -1053,6 +1094,22 @@ main() {
     local LAST_FAILURE_OUTPUT=""
 
     while true; do
+        # 0. GUARDS — cost, disk, iteration limits
+        ITERATION=$((ITERATION + 1))
+        if [[ $ITERATION -gt $MAX_ITERATIONS ]]; then
+            log "${RED}${BOLD}SAFETY:${RESET}${RED} Reached $MAX_ITERATIONS iterations. Stopping to prevent runaway loop.${RESET}"
+            exit 1
+        fi
+
+        local over_budget
+        over_budget=$(awk "BEGIN{print ($TOTAL_COST_USD >= $MAX_COST_USD) ? 1 : 0}")
+        if [[ "$over_budget" -eq 1 ]]; then
+            log "${RED}${BOLD}BUDGET:${RESET}${RED} Session cost \$${TOTAL_COST_USD} reached cap \$${MAX_COST_USD}. Stopping.${RESET}"
+            exit 1
+        fi
+
+        check_disk_space
+
         # 1. FIND — next unchecked item
         local match
         match=$(find_next_item)
