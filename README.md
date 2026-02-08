@@ -31,21 +31,48 @@ write the implementation, and trust nothing that isn't verified by tests.
 An autonomous shell script (`ralph.sh`) drives the entire build:
 
 ```
- plan.md          spec.md          ralph.sh
- ┌──────┐        ┌──────┐        ┌────────────────────────┐
- │- [ ] │───────>│ Test │───────>│ 1. Find next task       │
- │- [ ] │        │Matrix│        │ 2. Claude: write test   │
- │- [x] │        │      │        │ 3. Claude: write code   │
- │- [x] │        │      │        │ 4. Run test suite (gate)│
- └──────┘        └──────┘        │ 5. Mark [x] or retry    │
-                                 │ 6. Auto-commit           │
-                                 │ 7. Loop                  │
-                                 └────────────────────────┘
+                     ┌─────────────┐
+                     │  PREFLIGHT   │  verify claude, jq, git
+                     └──────┬──────┘
+                            │
+                     ┌──────▼──────┐
+                     │ LOAD CONFIG │  config.json → language, test cmd
+                     └──────┬──────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │       MAIN LOOP           │
+              │                           │
+              │  1. FIND next - [ ] item  │  plan.md
+              │  2. CONTEXT phase + story │  extract story ID
+              │  3. BUILD prompt          │  + Test Matrix from spec.md
+              │     + context.md          │  + failure context (retries)
+              │  4. RUN claude -p         │  Claude does RED→GREEN TDD
+              │     (stream-json output)  │
+              │  5. SCOPE CHECK           │  warn on out-of-scope changes
+              │  6. VERIFY tests          │  independent test run
+              │          │                │
+              │       ┌──▼──┐             │
+              │       │PASS?│             │
+              │       └──┬──┘             │
+              │      yes │ no             │
+              │    ┌─────┴──────┐         │
+              │    ▼            ▼         │
+              │  MARK [x]   SAVE failure  │  failure context → retry
+              │    │         → LOOP       │
+              │    ▼                      │
+              │  STORY COMPLETE?          │
+              │    yes → COMMIT           │  auto-commit via claude
+              │        → SUGGEST          │  update suggestions.md
+              │  LOOP                     │
+              └───────────────────────────┘
 ```
 
-The test suite is the only authority. If tests fail, the checkbox stays
-unchecked and Claude gets another attempt. After 3 failures, the loop
-pauses for a human to look.
+**Key behaviors:**
+- The test suite is the only authority — Claude's claim is never trusted
+- On failure, the test output is fed into the next retry prompt
+- After 3 consecutive failures on the same task, the loop pauses for a human
+- At story/epic milestones, Claude reviews the codebase and suggests improvements
+- A rolling `context.md` carries learnings between tasks
 
 ## What Strawman Will Support
 
@@ -73,7 +100,7 @@ cp config-examples/config.python.json config.json
 # 3. Let Claude build it
 ./ralph.sh
 
-# Or preview what would happen first
+# Or preview what would happen first (shows the full prompt)
 ./ralph.sh --dry-run
 ```
 
@@ -108,11 +135,11 @@ The default `config.json` targets Racket. Config examples are provided for:
 # Autonomous mode — writes tests, writes code, verifies, commits
 ./ralph.sh
 
-# Preview — shows what would happen without invoking Claude
+# Preview — shows the full prompt without invoking Claude
 ./ralph.sh --dry-run
 ```
 
-Progress is tracked as checkboxes in `plan.md`. Logs go to `ralph.log`.
+Progress is tracked as checkboxes in `plan.md`. Per-task logs go to `logs/`.
 
 ## Project Layout
 
@@ -123,11 +150,29 @@ strawman-seed/
   ralph.sh             Autonomous TDD loop driver
   spec.md              10 epics, 37 stories, 150+ test matrix rows
   plan.md              TDD build order with per-task checkboxes
+  context.md           Rolling working memory across tasks
+  suggestions.md       Improvements surfaced at milestones
   CLAUDE.md            Conventions for Claude Code
   examples/            Example .straw programs
   src/                 Production code (created by Claude)
   tests/               Test suite (created by Claude)
+  logs/                Per-task logs and stream recordings
 ```
+
+## The Prompt
+
+Each task prompt includes:
+
+| Section | Source | Purpose |
+|---------|--------|---------|
+| Task & context | plan.md | What to build now |
+| Test Matrix | spec.md | Exact input/expected pairs |
+| Previous learnings | context.md | Decisions, patterns, gotchas |
+| Failure context | test output | What went wrong (retries only) |
+| Scope rules | ralph.sh | Which files can be modified |
+
+Claude is instructed to follow strict TDD (RED → GREEN), update `context.md`
+with learnings after each task, and stay within scope.
 
 ## Requirements
 
