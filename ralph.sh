@@ -16,6 +16,7 @@ LOG="$PROJECT_DIR/ralph.log"
 MAX_RETRIES=3
 DRY_RUN=false
 CONFIG="$PROJECT_DIR/config.json"
+CONTEXT_FILE="$PROJECT_DIR/context.md"
 
 if [[ "${1:-}" == "--dry-run" ]]; then
     DRY_RUN=true
@@ -307,6 +308,31 @@ check_story_complete() {
     [[ "$remaining" -eq 0 ]]
 }
 
+# ── Check if a phase (epic) is fully done ────────────────────────────────
+
+check_phase_complete() {
+    local line_num="$1"
+
+    # Find the start of the current phase
+    local phase_start
+    phase_start=$(head -n "$line_num" "$PLAN" | grep -n '^## Phase' | tail -1 | cut -d: -f1 || true)
+    [[ -z "$phase_start" ]] && return 1
+
+    # Find the next phase header after current one
+    local next_phase_offset
+    next_phase_offset=$(tail -n "+$((phase_start + 1))" "$PLAN" | grep -n '^## Phase' | head -1 | cut -d: -f1 || true)
+
+    local unchecked
+    if [[ -n "$next_phase_offset" ]]; then
+        local phase_end=$((phase_start + next_phase_offset))
+        unchecked=$(sed -n "${phase_start},${phase_end}p" "$PLAN" | grep -c '^ *- \[ \]' || true)
+    else
+        unchecked=$(tail -n "+$phase_start" "$PLAN" | grep -c '^ *- \[ \]' || true)
+    fi
+
+    [[ "$unchecked" -eq 0 ]]
+}
+
 # ── Stream filter ────────────────────────────────────────────────────────
 
 # Reads NDJSON from claude --output-format stream-json on stdin and prints
@@ -422,7 +448,7 @@ check_scope() {
     local unexpected=""
     while IFS= read -r file; do
         [[ -z "$file" ]] && continue
-        if [[ "$file" != "$SOURCE_DIR/"* && "$file" != "$TEST_DIR/"* ]]; then
+        if [[ "$file" != "$SOURCE_DIR/"* && "$file" != "$TEST_DIR/"* && "$file" != "context.md" && "$file" != "suggestions.md" ]]; then
             unexpected="${unexpected}  ${file}\n"
         fi
     done <<< "$changed_files"
@@ -461,6 +487,12 @@ $(if [[ -n "$story_id" ]]; then
     echo "Use the exact Input/Expected values from the table above."
 fi)
 
+$(if [[ -f "$CONTEXT_FILE" ]]; then
+    echo "CONTEXT FROM PREVIOUS TASKS:"
+    cat "$CONTEXT_FILE"
+    echo ""
+fi)
+
 INSTRUCTIONS — follow this exact sequence:
 
 1. Read the current source files and test files to understand what exists.
@@ -474,10 +506,21 @@ INSTRUCTIONS — follow this exact sequence:
 5. GREEN: Run \`$TEST_DIR_CMD\` — confirm ALL tests pass (new + existing).
 6. If any test fails, fix the code (not the test) until all tests pass.
 7. Do a final \`$TEST_DIR_CMD\` to confirm everything is green.
+8. UPDATE \`context.md\` — After all tests pass, update context.md in the project root.
+   It has three sections — update each as needed:
+   - **Current State**: What modules exist, their public APIs, how they connect.
+     Update this to reflect what you just built or changed.
+   - **Conventions & Decisions**: Patterns, struct choices, naming, error formats,
+     test organization. Add new conventions you established. Keep existing ones
+     that are still relevant.
+   - **Gotchas & Notes for Next Task**: Edge cases discovered, things that almost
+     broke, what the next task should watch out for. This section is volatile —
+     rewrite it each time with what matters now.
+   Keep the whole file under 100 lines. Replace outdated notes, don't just append.
 
 RULES:
 - Create $SOURCE_DIR/ and $TEST_DIR/ directories if they don't exist.
-- You should only modify files in $SOURCE_DIR/ and $TEST_DIR/.
+- You may only modify files in $SOURCE_DIR/, $TEST_DIR/, and context.md.
 - Do NOT modify: plan.md, spec.md, ralph.sh, config.json, CLAUDE.md, README.md
 - Do NOT commit — the driver script handles commits.
 - Do NOT add features beyond what the current task requires.
@@ -535,6 +578,66 @@ CPROMPT
         | tee "$LOGS_DIR/commit-$(date '+%Y%m%d-%H%M%S').jsonl" \
         | ralph_stream_filter \
         || log "WARNING: Auto-commit failed"
+}
+
+# ── Suggest improvements ─────────────────────────────────────────────────
+
+# Called after story or epic completion. Asks Claude to review what was built
+# and update suggestions.md with improvements, features, and deprecations.
+suggest_improvements() {
+    local story_header="$1"
+    local phase_header="$2"
+    local milestone="$3"  # "story" or "epic"
+
+    log "REFLECT: Generating suggestions after $milestone completion ($story_header)"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log "DRY-RUN: Would generate suggestions for $story_header"
+        return
+    fi
+
+    local suggest_prompt
+    suggest_prompt="You just completed a $milestone for the Strawman Lisp interpreter in $LANG_NAME.
+
+Completed: $story_header ($phase_header)
+Project directory: $PROJECT_DIR
+
+Review the current codebase (source in $SOURCE_DIR/, tests in $TEST_DIR/) and
+update suggestions.md in the project root.
+
+The file has two sections:
+
+## Active
+Add new suggestions here. Each entry should be a single line:
+- [type] Description — why it matters (surfaced after $story_header)
+
+Types: improvement (refactor/quality), feature (new capability), direction (architectural)
+
+Only suggest things that are non-obvious and actionable. Focus on:
+- Patterns in the code that could be generalized
+- Edge cases the spec doesn't cover but a real Lisp would need
+- Architectural decisions that should be revisited before the next epic
+- Performance or correctness issues spotted during implementation
+
+Quality over quantity — 2-3 thoughtful suggestions beat 10 generic ones.
+
+## Deprecated
+Review existing Active suggestions. If any are now irrelevant, already done,
+or would be harmful given what you have learned, move them here with a reason:
+- [~~type~~] Description — reason it is deprecated (deprecated after $story_header)
+
+Do NOT modify any source code, test files, or other project files.
+Only modify suggestions.md."
+
+    claude -p "$suggest_prompt" \
+        --verbose \
+        --dangerously-skip-permissions \
+        --max-turns 10 \
+        --output-format stream-json \
+        2>> "${CURRENT_TASK_LOG:-$LOG}" \
+        | tee "$LOGS_DIR/suggest-$(date '+%Y%m%d-%H%M%S').jsonl" \
+        | ralph_stream_filter \
+        || log "WARNING: Suggestion generation failed"
 }
 
 # ── Main loop ────────────────────────────────────────────────────────────
@@ -707,9 +810,16 @@ main() {
             LAST_FAILURE_OUTPUT=""
             log "Marked line $line_num as done"
 
-            # 8. COMMIT — if story is complete
+            # 8. COMMIT & REFLECT — if story is complete
             if check_story_complete "$line_num"; then
                 auto_commit "$story_header" "$phase_header"
+
+                # Check if the entire phase (epic) is also complete
+                if check_phase_complete "$line_num"; then
+                    suggest_improvements "$story_header" "$phase_header" "epic"
+                else
+                    suggest_improvements "$story_header" "$phase_header" "story"
+                fi
             fi
         else
             log "FAIL — tests did not pass (exit code $test_exit)"
