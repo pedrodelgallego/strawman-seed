@@ -311,75 +311,31 @@ show_progress() {
     echo ""
 }
 
-# ── Context extraction ───────────────────────────────────────────────────
+# ── Tag extraction ────────────────────────────────────────────────────────
 
-# Given a line number in plan.md, walk backwards to find the nearest
-# Phase header (## Phase ...) and Story header (**E...).
-get_context() {
-    local line_num="$1"
-    local phase_header=""
-    local story_header=""
-    local stories_line=""
+# All context is embedded in the checkbox text via [P4][E1.5] tags.
+# These functions extract phase/story IDs directly — no backward walking.
 
-    # Read lines above the checkbox, bottom-up
-    local i=$((line_num - 1))
-    while [[ $i -ge 1 ]]; do
-        local line
-        line=$(sed -n "${i}p" "$PLAN")
-
-        # Story header: **E1.4 — ... or **E2.1 — ... (bold story labels)
-        if [[ -z "$story_header" && "$line" =~ ^\*\*E[0-9] ]]; then
-            story_header="$line"
-        fi
-
-        # Stories line: *Stories: E1.1* (italic, under phase header)
-        if [[ -z "$stories_line" && "$line" =~ ^\*Stories: ]]; then
-            stories_line="$line"
-        fi
-
-        # Phase header: ## Phase N — ...
-        if [[ -z "$phase_header" && "$line" =~ ^##\  ]]; then
-            phase_header="$line"
-            # If no story header found, use the stories line as context
-            if [[ -z "$story_header" && -n "$stories_line" ]]; then
-                story_header="$stories_line"
-            fi
-            break
-        fi
-
-        i=$((i - 1))
-    done
-
-    # Fallback: if still no story header, use phase header
-    if [[ -z "$story_header" ]]; then
-        story_header="$phase_header"
+# Extracts story ID (e.g., "E1.4") from the [E1.4] tag in checkbox text.
+extract_story_id() {
+    local checkbox_text="$1"
+    if [[ "$checkbox_text" =~ \[E([0-9]+\.[0-9]+)\] ]]; then
+        echo "E${BASH_REMATCH[1]}"
     fi
-
-    echo "$phase_header"
-    echo "$story_header"
 }
 
-# ── Extract story ID ────────────────────────────────────────────────────
-
-# Extracts a clean story ID (e.g., "E1.1") from story header and checkbox text.
-# Tries checkbox text first (Phase 8+ embeds story ID), then story header.
-extract_story_id() {
-    local story_header="$1"
-    local checkbox_text="${2:-}"
-
-    # Try checkbox text first (Phase 8+ format: **E4.1** — ...)
-    if [[ -n "$checkbox_text" && "$checkbox_text" =~ E([0-9]+\.[0-9]+) ]]; then
-        echo "E${BASH_REMATCH[1]}"
-        return
+# Extracts phase ID (e.g., "P4") from the [P4] tag in checkbox text.
+extract_phase_id() {
+    local checkbox_text="$1"
+    if [[ "$checkbox_text" =~ \[P([0-9]+)\] ]]; then
+        echo "P${BASH_REMATCH[1]}"
     fi
+}
 
-    # Then try story header (**E1.4 — ... or *Stories: E1.1*)
-    if [[ "$story_header" =~ E([0-9]+\.[0-9]+) ]]; then
-        echo "E${BASH_REMATCH[1]}"
-        return
-    fi
-
-    echo ""
+# Returns the phase header line (## Phase N — ...) above a given line.
+get_phase_header() {
+    local line_num="$1"
+    head -n "$line_num" "$PLAN" | grep '^## Phase' | tail -1
 }
 
 # ── Extract Test Matrix from spec.md ─────────────────────────────────────
@@ -503,12 +459,9 @@ verify_plan_line() {
 
     log "${YELLOW}WARNING:${RESET} plan.md was modified externally — re-locating task by content"
 
-    # Escape special regex chars in the checkbox text for grep
-    local escaped
-    escaped=$(printf '%s' "$checkbox_text" | sed 's/[.[\*^$()+?{|]/\\&/g')
-
+    # Use grep -F (fixed string) to avoid regex escaping issues with task text
     local new_match
-    new_match=$(grep -n "^ *- \[ \] ${escaped}$" "$PLAN" | head -1) || true
+    new_match=$(grep -nF -- "- [ ] ${checkbox_text}" "$PLAN" | head -1) || true
 
     if [[ -z "$new_match" ]]; then
         # Item may have been checked off externally or deleted
@@ -565,46 +518,23 @@ mark_done() {
 
 # ── Check if a story block is fully done ─────────────────────────────────
 
-# Look ahead from current position: if no more `- [ ]` before the next
-# **REFACTOR** or **COMMIT** or next story header, the story is complete.
+# A story is complete when no unchecked items with its [E#.#] tag remain.
 check_story_complete() {
-    local line_num="$1"
+    local story_id="$1"
+    [[ -z "$story_id" ]] && return 1
     local remaining
-    remaining=$(tail -n "+$line_num" "$PLAN" | grep -c '^ *- \[ \]' || true)
-
-    # Check only until the next phase header
-    local next_phase_line
-    next_phase_line=$(tail -n "+$((line_num + 1))" "$PLAN" | grep -n '^## Phase' | head -1 | cut -d: -f1 || true)
-
-    if [[ -n "$next_phase_line" ]]; then
-        remaining=$(tail -n "+$line_num" "$PLAN" | head -n "$next_phase_line" | grep -c '^ *- \[ \]' || true)
-    fi
-
+    remaining=$(grep -c "^ *- \[ \] \[P[0-9]*\]\[${story_id}\]" "$PLAN" || true)
     [[ "$remaining" -eq 0 ]]
 }
 
 # ── Check if a phase (epic) is fully done ────────────────────────────────
 
+# A phase is complete when no unchecked items with its [P#] tag remain.
 check_phase_complete() {
-    local line_num="$1"
-
-    # Find the start of the current phase
-    local phase_start
-    phase_start=$(head -n "$line_num" "$PLAN" | grep -n '^## Phase' | tail -1 | cut -d: -f1 || true)
-    [[ -z "$phase_start" ]] && return 1
-
-    # Find the next phase header after current one
-    local next_phase_offset
-    next_phase_offset=$(tail -n "+$((phase_start + 1))" "$PLAN" | grep -n '^## Phase' | head -1 | cut -d: -f1 || true)
-
+    local phase_id="$1"
+    [[ -z "$phase_id" ]] && return 1
     local unchecked
-    if [[ -n "$next_phase_offset" ]]; then
-        local phase_end=$((phase_start + next_phase_offset))
-        unchecked=$(sed -n "${phase_start},${phase_end}p" "$PLAN" | grep -c '^ *- \[ \]' || true)
-    else
-        unchecked=$(tail -n "+$phase_start" "$PLAN" | grep -c '^ *- \[ \]' || true)
-    fi
-
+    unchecked=$(grep -c "^ *- \[ \] \[${phase_id}\]" "$PLAN" || true)
     [[ "$unchecked" -eq 0 ]]
 }
 
@@ -887,9 +817,8 @@ check_scope() {
 build_prompt() {
     local checkbox_text="$1"
     local phase_header="$2"
-    local story_header="$3"
-    local story_id="${4:-}"
-    local failure_context="${5:-}"
+    local story_id="${3:-}"
+    local failure_context="${4:-}"
 
     cat <<PROMPT
 You are working on the Strawman Lisp interpreter in $LANG_NAME. Follow strict TDD.
@@ -898,7 +827,7 @@ PROJECT DIRECTORY: $PROJECT_DIR
 
 CURRENT TASK: $checkbox_text
 PHASE: $phase_header
-STORY: $story_header
+STORY: $story_id
 
 $(if [[ -n "$story_id" ]]; then
     echo "TEST MATRIX (from spec.md for $story_id):"
@@ -1189,18 +1118,18 @@ main() {
         local checkbox_text
         checkbox_text=$(echo "$match" | cut -d: -f2- | sed 's/^ *- \[ \] //')
 
-        # 2. CONTEXT — extract phase and story headers
-        local context
-        context=$(get_context "$line_num")
+        # 2. CONTEXT — extract phase/story IDs from tags
+        local story_id
+        story_id=$(extract_story_id "$checkbox_text")
+        local phase_id
+        phase_id=$(extract_phase_id "$checkbox_text")
         local phase_header
-        phase_header=$(echo "$context" | head -1)
-        local story_header
-        story_header=$(echo "$context" | tail -1)
+        phase_header=$(get_phase_header "$line_num")
 
         log "${DIM}──────────────────────────────────────────${RESET}"
         log "${BOLD}TASK:${RESET}  ${CYAN}$checkbox_text${RESET}"
-        log "${BOLD}PHASE:${RESET} $phase_header"
-        log "${BOLD}STORY:${RESET} $story_header"
+        log "${BOLD}PHASE:${RESET} ${phase_header:-${phase_id:-unknown}}"
+        log "${BOLD}STORY:${RESET} ${story_id:-unknown}"
         log "${DIM}LINE:  $line_num${RESET}"
 
         show_progress "$checkbox_text" "$((consecutive_failures + 1))"
@@ -1226,10 +1155,8 @@ main() {
         fi
 
         # 4. BUILD — construct the prompt
-        local story_id
-        story_id=$(extract_story_id "$story_header" "$checkbox_text")
         local prompt
-        prompt=$(build_prompt "$checkbox_text" "$phase_header" "$story_header" "$story_id" "$LAST_FAILURE_OUTPUT")
+        prompt=$(build_prompt "$checkbox_text" "$phase_header" "$story_id" "$LAST_FAILURE_OUTPUT")
 
         # Per-task log file
         local task_slug
@@ -1368,17 +1295,17 @@ main() {
             log "${DIM}Marked task as done${RESET}"
 
             # 8. COMMIT & REFLECT — if story is complete
-            if check_story_complete "$MARK_DONE_LINE"; then
-                auto_commit "$story_header" "$phase_header"
+            if check_story_complete "$story_id"; then
+                auto_commit "$story_id" "$phase_header"
 
                 # Check if the entire phase (epic) is also complete
-                if check_phase_complete "$MARK_DONE_LINE"; then
+                if check_phase_complete "$phase_id"; then
                     run_integration_tests "$phase_header" || {
                         log "${YELLOW}WARNING:${RESET} Integration tests failed — continuing but review needed"
                     }
-                    suggest_improvements "$story_header" "$phase_header" "epic"
+                    suggest_improvements "$story_id" "$phase_header" "epic"
                 else
-                    suggest_improvements "$story_header" "$phase_header" "story"
+                    suggest_improvements "$story_id" "$phase_header" "story"
                 fi
             fi
         else

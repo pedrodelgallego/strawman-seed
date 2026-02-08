@@ -71,7 +71,7 @@ Each source module has a matching test file in `{test_dir}/`.
 | File | What it contains |
 |------|-----------------|
 | `spec.md` | 10 epics, 37 user stories, each with narrative, requirements, test matrix, acceptance criteria, definition of done |
-| `plan.md` | 15 phases with per-task `- [ ]` checkboxes tracking TDD progress |
+| `plan.md` | 15 phases with `- [ ] [P#][E#.#] task` checkboxes tracking TDD progress |
 | `ralph.sh` | Autonomous driver that reads plan.md and invokes Claude Code |
 
 **Epics map to *Lisp in Small Pieces* chapters:**
@@ -112,6 +112,14 @@ Every task follows this exact cycle:
 - Do not modify `plan.md` checkboxes — `ralph.sh` handles that
 - Do not add features beyond what the current task requires
 
+## Definition of Done (per phase)
+
+1. Every Test Matrix row has a corresponding failing-then-passing test
+2. Full suite passes (run `test_dir_command` from config.json)
+3. No regressions in previous phases
+4. Code refactored (no duplication, clear naming)
+5. Committed with a descriptive message
+
 ## Coding Conventions
 
 **Language style** (see `config.json` for active language):
@@ -136,7 +144,7 @@ Every task follows this exact cycle:
 The autonomous driver that builds the interpreter without human coding:
 
 1. Reads `plan.md`, finds the first unchecked `- [ ]` item
-2. Extracts phase header (`## Phase N — ...`) and story header (`**E1.4 — ...`)
+2. Extracts phase ID (`[P4]`) and story ID (`[E1.5]`) from the checkbox tags
 3. Builds a prompt telling Claude Code to execute one TDD cycle for that task
 4. Invokes `claude -p` with `--dangerously-skip-permissions --max-turns 50`
 5. **Independently** runs the test suite (`test_dir_command` from config.json) to verify — Claude's claim is not trusted
