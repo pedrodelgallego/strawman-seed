@@ -25,9 +25,9 @@ else
 fi
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLAN="$PROJECT_DIR/plan.md"
-SPEC="$PROJECT_DIR/spec.md"
-LOG="$PROJECT_DIR/ralph.log"
+PLAN="$PROJECT_DIR/docs/plan.md"
+SPEC="$PROJECT_DIR/docs/spec.md"
+LOG="$PROJECT_DIR/logs/ralph.log"
 LOCK_FILE="$PROJECT_DIR/.ralph.lock"
 MAX_RETRIES=3
 MAX_LOG_BYTES=$((10 * 1024 * 1024))  # 10 MB
@@ -36,7 +36,7 @@ MAX_COST_USD=50                       # Session cost cap ($)
 MAX_ITERATIONS=200                    # Safety cap on loop iterations
 DRY_RUN=false
 CONFIG="$PROJECT_DIR/config.json"
-CONTEXT_FILE="$PROJECT_DIR/context.md"
+CONTEXT_FILE="$PROJECT_DIR/docs/context.md"
 
 # Session-level counters for exit summary
 TASKS_COMPLETED=0
@@ -343,7 +343,7 @@ get_phase_header() {
 # Given a story ID (e.g., "E1.1"), extracts the Test Matrix table from spec.md.
 extract_test_matrix() {
     local story_id="$1"
-    local spec="$PROJECT_DIR/spec.md"
+    local spec="$SPEC"
 
     # Find story header line (### E1.1 — ...)
     local header_line
@@ -382,7 +382,7 @@ extract_test_matrix() {
 # Given a story ID (e.g., "E1.1"), extracts the Acceptance Criteria section.
 extract_acceptance_criteria() {
     local story_id="$1"
-    local spec="$PROJECT_DIR/spec.md"
+    local spec="$SPEC"
 
     # Find story header line (### E1.1 — ...)
     local header_line
@@ -797,7 +797,7 @@ check_scope() {
     local reverted=false
     while IFS= read -r file; do
         [[ -z "$file" ]] && continue
-        if [[ "$file" != "$SOURCE_DIR/"* && "$file" != "$TEST_DIR/"* && "$file" != "context.md" && "$file" != "suggestions.md" ]]; then
+        if [[ "$file" != "$SOURCE_DIR/"* && "$file" != "$TEST_DIR/"* && "$file" != "docs/context.md" && "$file" != "docs/suggestions.md" ]]; then
             log "${RED}SCOPE VIOLATION:${RESET} Reverting unauthorized change to ${BOLD}$file${RESET}"
             (cd "$PROJECT_DIR" && {
                 # Revert tracked files; delete untracked ones
@@ -808,7 +808,7 @@ check_scope() {
     done <<< "$changed_files"
 
     if [[ "$reverted" == true ]]; then
-        log "${YELLOW}WARNING:${RESET} Unauthorized file changes were reverted. Only $SOURCE_DIR/, $TEST_DIR/, context.md, suggestions.md are allowed."
+        log "${YELLOW}WARNING:${RESET} Unauthorized file changes were reverted. Only $SOURCE_DIR/, $TEST_DIR/, docs/context.md, docs/suggestions.md are allowed."
     fi
 }
 
@@ -871,7 +871,7 @@ INSTRUCTIONS — follow this exact sequence:
 5. GREEN: Run \`$TEST_DIR_CMD\` — confirm ALL tests pass (new + existing).
 6. If any test fails, fix the code (not the test) until all tests pass.
 7. Do a final \`$TEST_DIR_CMD\` to confirm everything is green.
-8. UPDATE \`context.md\` — After all tests pass, update context.md in the project root.
+8. UPDATE \`docs/context.md\` — After all tests pass, update docs/context.md.
    It has three sections — update each as needed:
    - **Current State**: What modules exist, their public APIs, how they connect.
      Update this to reflect what you just built or changed.
@@ -885,8 +885,8 @@ INSTRUCTIONS — follow this exact sequence:
 
 RULES:
 - Create $SOURCE_DIR/ and $TEST_DIR/ directories if they don't exist.
-- You may only modify files in $SOURCE_DIR/, $TEST_DIR/, and context.md.
-- Do NOT modify: plan.md, spec.md, ralph.sh, config.json, CLAUDE.md, README.md
+- You may only modify files in $SOURCE_DIR/, $TEST_DIR/, and docs/context.md.
+- Do NOT modify: docs/plan.md, docs/spec.md, ralph.sh, config.json, CLAUDE.md, README.md
 - Do NOT commit — the driver script handles commits.
 - Do NOT add features beyond what the current task requires.
 - $MODULE_INSTRUCTIONS
@@ -986,7 +986,7 @@ Context: All tests are passing for: $story_header ($phase_header)
 Steps:
 1. Run \`git status\` to see what changed.
 2. Run \`git diff\` to review changes.
-3. Stage all relevant source and test files (NOT plan.md, NOT ralph.log).
+3. Stage all relevant source and test files (NOT docs/plan.md, NOT logs/ralph.log).
 4. Commit with a descriptive message summarizing what was implemented.
    End the message with: Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 CPROMPT
@@ -1026,7 +1026,7 @@ Completed: $story_header ($phase_header)
 Project directory: $PROJECT_DIR
 
 Review the current codebase (source in $SOURCE_DIR/, tests in $TEST_DIR/) and
-update suggestions.md in the project root.
+update docs/suggestions.md.
 
 The file has two sections:
 
@@ -1050,7 +1050,7 @@ or would be harmful given what you have learned, move them here with a reason:
 - [~~type~~] Description — reason it is deprecated (deprecated after $story_header)
 
 Do NOT modify any source code, test files, or other project files.
-Only modify suggestions.md."
+Only modify docs/suggestions.md."
 
     claude -p "$suggest_prompt" \
         --verbose \
@@ -1199,7 +1199,7 @@ main() {
             --dangerously-skip-permissions \
             --max-turns 50 \
             --output-format stream-json \
-            --append-system-prompt "You are executing a TDD cycle for the Strawman Lisp interpreter in $LANG_NAME. Read spec.md and plan.md for context. Write tests first, then minimal code. Always run $TEST_DIR_CMD to verify." \
+            --append-system-prompt "You are executing a TDD cycle for the Strawman Lisp interpreter in $LANG_NAME. Read docs/spec.md and docs/plan.md for context. Write tests first, then minimal code. Always run $TEST_DIR_CMD to verify." \
             2>> "$CURRENT_TASK_LOG" \
             | tee "$raw_stream" \
             | ralph_stream_filter \

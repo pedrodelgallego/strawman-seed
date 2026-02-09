@@ -70,9 +70,9 @@ Each source module has a matching test file in `{test_dir}/`.
 
 | File | What it contains |
 |------|-----------------|
-| `spec.md` | 10 epics, 37 user stories, each with narrative, requirements, test matrix, acceptance criteria, definition of done |
-| `plan.md` | 15 phases with `- [ ] [P#][E#.#] task` checkboxes tracking TDD progress |
-| `ralph.sh` | Autonomous driver that reads plan.md and invokes Claude Code |
+| `docs/spec.md` | 10 epics, 37 user stories, each with narrative, requirements, test matrix, acceptance criteria, definition of done |
+| `docs/plan.md` | 15 phases with `- [ ] [P#][E#.#] task` checkboxes tracking TDD progress |
+| `ralph.sh` | Autonomous driver that reads `docs/plan.md` and invokes Claude Code |
 
 **Epics map to *Lisp in Small Pieces* chapters:**
 
@@ -109,7 +109,7 @@ Every task follows this exact cycle:
 - One Test Matrix row per RED→GREEN cycle (keep cycles small)
 - Run the full suite after every GREEN
 - Commit after completing each story (all its Test Matrix rows green)
-- Do not modify `plan.md` checkboxes — `ralph.sh` handles that
+- Do not modify `docs/plan.md` checkboxes — `ralph.sh` handles that
 - Do not add features beyond what the current task requires
 
 ## Definition of Done (per phase)
@@ -143,15 +143,15 @@ Every task follows this exact cycle:
 
 The autonomous driver that builds the interpreter without human coding:
 
-1. Reads `plan.md`, finds the first unchecked `- [ ]` item
+1. Reads `docs/plan.md`, finds the first unchecked `- [ ]` item
 2. Extracts phase ID (`[P4]`) and story ID (`[E1.5]`) from the checkbox tags
 3. Builds a prompt telling Claude Code to execute one TDD cycle for that task
 4. Invokes `claude -p` with `--dangerously-skip-permissions --max-turns 50`
 5. **Independently** runs the test suite (`test_dir_command` from config.json) to verify — Claude's claim is not trusted
-6. If tests pass: marks `- [x]` in plan.md
+6. If tests pass: marks `- [x]` in `docs/plan.md`
 7. If tests fail: leaves unchecked, retries (up to 3 times, then stops for human)
 8. When all checkboxes in a story are `[x]`: auto-commits
-9. Logs everything to `ralph.log`
+9. Logs everything to `logs/ralph.log`
 
 ## Value Representation
 
